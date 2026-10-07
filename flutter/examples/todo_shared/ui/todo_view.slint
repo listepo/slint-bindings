@@ -1,0 +1,45 @@
+// The todo list UI both examples show: examples/todo (interpreter + AOT) and
+// examples/todo_skia (Skia) import it from their own ui/todo.slint, which
+// wraps it in a window of its own. Not a build_runner source of this package:
+// each app's generated wrapper embeds it, and its AOT build compiles it.
+import { Button, CheckBox, LineEdit, ListView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export struct TodoItem {
+    title: string,
+    checked: bool,
+}
+
+export component TodoView inherits VerticalBox {
+    in property <[TodoItem]> todo-model;
+
+    callback add-todo(title: string);
+    callback toggle-todo(index: int, checked: bool);
+    callback remove-done();
+
+    HorizontalBox {
+        padding: 0;
+        edit := LineEdit {
+            placeholder-text: "What needs to be done?";
+            accepted(text) => { root.add-todo(text); self.text = ""; }
+        }
+        Button {
+            text: "Add";
+            primary: true;
+            clicked => { root.add-todo(edit.text); edit.text = ""; }
+        }
+    }
+    ListView {
+        for item[index] in root.todo-model: HorizontalBox {
+            padding: 0;
+            CheckBox {
+                text: item.title;
+                checked: item.checked;
+                toggled => { root.toggle-todo(index, self.checked); }
+            }
+        }
+    }
+    Button {
+        text: "Remove done items";
+        clicked => { root.remove-done(); }
+    }
+}

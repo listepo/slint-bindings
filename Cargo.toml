@@ -12,6 +12,8 @@ publish = false
 
 [workspace.dependencies]
 slint-bindings-core = { path = "crates/slint-bindings-core" }
+# Shared with flutter/: software platform, Dart FFI events, UI-thread guard.
+slint-embed = { path = "flutter/packages/slint/rust/embed" }
 # M1 spike renders on the CPU only: no backend, no event loop, no GPU context,
 # so the host app keeps its own run loop.
 slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-18", "renderer-software"] }

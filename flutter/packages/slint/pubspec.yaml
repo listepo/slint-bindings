@@ -1,0 +1,30 @@
+name: slint
+description: "Slint UI toolkit for Flutter: the backend-agnostic core API (engine, components, render targets, input events) and the SlintView widget."
+version: 0.0.1
+license: Apache-2.0
+homepage: https://github.com/listepo/slint_dart
+repository: https://github.com/listepo/slint_dart/tree/main/packages/slint
+issue_tracker: https://github.com/listepo/slint_dart/issues
+topics:
+  - slint
+  - ui
+  - gui
+  - widget
+  - rust
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  # slint_view_test.dart drives the widget with a fake render target.
+  flutter_test:
+    sdk: flutter
+  # slint_core.dart is Flutter-free on purpose, so its tests run under plain
+  # `dart test` — no binding, no device.
+  test: ^1.25.0

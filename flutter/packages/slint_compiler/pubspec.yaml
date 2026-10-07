@@ -1,0 +1,31 @@
+name: slint_compiler
+description: "AOT backend for Slint on Flutter: compiles .slint files ahead of time into the app's native code asset, tree-shaken, with no interpreter at runtime."
+version: 0.0.1
+license: Apache-2.0
+homepage: https://github.com/listepo/slint_dart
+repository: https://github.com/listepo/slint_dart/tree/main/packages/slint_compiler
+issue_tracker: https://github.com/listepo/slint_dart/issues
+topics:
+  - slint
+  - codegen
+  - aot
+  - rust
+  - native-assets
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  build: ^4.0.10
+  code_assets: ^2.0.0
+  ffi: ^2.1.0
+  hooks: ^2.2.0
+  native_toolchain_c: ^0.19.4
+  record_use: ^1.1.1
+  slint: ^0.0.1
+  slint_build: ^0.0.1
+  slint_generator: ^0.0.1
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.0

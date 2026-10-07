@@ -1,0 +1,29 @@
+name: slint_patrol
+description: Drive Slint UIs from Patrol tests — find elements in the live component's accessibility tree by label, id, type, or role, and tap and type through real Flutter gestures.
+version: 0.0.1
+license: Apache-2.0
+homepage: https://github.com/listepo/slint_dart
+repository: https://github.com/listepo/slint_dart/tree/main/packages/slint_patrol
+issue_tracker: https://github.com/listepo/slint_dart/issues
+topics:
+  - slint
+  - patrol
+  - testing
+  - integration-testing
+  - accessibility
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_test:
+    sdk: flutter
+  patrol_finders: ^3.6.0
+  slint: ^0.0.1
+  slint_testing: ^0.0.1
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  slint_interpreter: ^0.0.1

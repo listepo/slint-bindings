@@ -1,0 +1,26 @@
+name: slint_build
+description: "Build-hook plumbing for Slint on Flutter: stages a Cargo workspace for the Rust FFI crates, runs cargo through a persistent bazel_worker and emits native code assets."
+version: 0.0.1
+license: Apache-2.0
+homepage: https://github.com/listepo/slint_dart
+repository: https://github.com/listepo/slint_dart/tree/main/packages/slint_build
+issue_tracker: https://github.com/listepo/slint_dart/issues
+topics:
+  - slint
+  - rust
+  - cargo
+  - native-assets
+  - build-hooks
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  bazel_worker: ^1.1.5
+  code_assets: ^2.0.0
+  hooks: ^2.0.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.0

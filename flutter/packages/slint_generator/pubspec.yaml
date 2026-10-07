@@ -1,0 +1,30 @@
+name: slint_generator
+description: "build_runner codegen for Slint on Flutter: turns .slint files into typed Dart wrappers (properties, callbacks, structs) that run on any Slint backend."
+version: 0.0.1
+license: Apache-2.0
+homepage: https://github.com/listepo/slint_dart
+repository: https://github.com/listepo/slint_dart/tree/main/packages/slint_generator
+issue_tracker: https://github.com/listepo/slint_dart/issues
+topics:
+  - slint
+  - codegen
+  - build-runner
+  - ui
+  - gui
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  build: ^4.0.10
+  dart_style: ^3.1.0
+  path: ^1.9.0
+  pub_semver: ^2.1.0
+  slint: ^0.0.1
+  slint_build: ^0.0.1
+  yaml: ^3.1.2
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.0

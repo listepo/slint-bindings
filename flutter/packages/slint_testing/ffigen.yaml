@@ -1,0 +1,26 @@
+name: SlintTestingBindings
+description: Generated FFI bindings for slint-testing-ffi. Do not edit.
+output: lib/src/bindings.g.dart
+ffi-native:
+  asset-id: 'package:slint_testing/src/bindings.g.dart'
+functions:
+  include:
+    - 'slint_testing_.*'
+globals:
+  exclude:
+    - '.*'
+macros:
+  exclude:
+    - '.*'
+enums:
+  exclude:
+    - '.*'
+unnamed-enums:
+  exclude:
+    - '.*'
+headers:
+  entry-points:
+    - rust/include/slint_testing_ffi.h
+preamble: |
+  // dart format off
+  // ignore_for_file: type=lint

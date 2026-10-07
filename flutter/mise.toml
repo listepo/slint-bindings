@@ -1,0 +1,4 @@
+[tools]
+flutter = "latest"
+just = "latest"
+hugo = "0.165.0"

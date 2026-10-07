@@ -1,0 +1,17 @@
+[package]
+name = "slint-dart-interpreter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+slint-interpreter = { workspace = true, features = ["compat-1-2", "std", "internal", "internal-json"] }
+i-slint-compiler = { workspace = true }
+# For `search_api` only — the element search and geometry readers. Its testing
+# platform is never installed from here; see `elements.rs`.
+i-slint-backend-testing = { workspace = true }
+spin_on = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

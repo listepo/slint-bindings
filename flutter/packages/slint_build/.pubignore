@@ -1,0 +1,6 @@
+# Local build artifacts (also gitignored; keep explicit for publish)
+build/
+.dart_tool/
+**/target/
+*.iml
+AGENTS.md

@@ -24,8 +24,10 @@ If an `AGENTS.md` or `CLAUDE.md` exists higher in the tree, follow it too; on co
 - **Every `unsafe` block has a `// SAFETY:` comment**; every `unsafe fn` has a `# Safety` section.
 - **Slint is pinned exactly** (`=1.18.x` for `slint`, `slint-build`, `i-slint-core`):
   `i-slint-core` is internal and must match. Bump all three together, with creator permission.
-- **Shared code goes to `packages/`.** The embedding core overlaps slint_dart's
-  `slint-dart-core` and `slint-skia-ffi`; do not grow a second copy, see T3.
+- **Shared embedding lives in `slint-embed`.** `flutter/` is a copy of
+  [slint_dart](https://github.com/listepo/slint_dart). The software platform,
+  the Dart FFI event map and the UI-thread guard are `flutter/packages/slint/rust/embed`.
+  `slint-dart-core` re-exports them. Do not grow a second platform.
 
 ## Commands
 

@@ -1,0 +1,20 @@
+[package]
+name = "slint-introspect"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "slint-introspect"
+path = "src/main.rs"
+
+[dependencies]
+# Must match the `slint` version the generated AOT crate pins (see
+# slint_compiler/lib/src/rust_glue.dart) — the schema must describe the same
+# compiler that slint-build runs.
+i-slint-compiler = { workspace = true, features = ["rust", "display-diagnostics", "renderer-software"] }
+serde_json = { workspace = true }
+spin_on = { workspace = true }
+
+[lints]
+workspace = true

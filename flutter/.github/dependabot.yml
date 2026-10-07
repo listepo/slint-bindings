@@ -1,0 +1,52 @@
+# Weekly dependency update PRs for the pub workspace, the Cargo workspace and
+# the GitHub Actions the workflows use.
+version: 2
+updates:
+  # The pub workspace: the root pubspec.yaml lists every package and example
+  # and owns the one pubspec.lock they share.
+  - package-ecosystem: pub
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      pub-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Pinned to 7.x: melos 8 wants cli_util ^0.5 while ffigen ^21 pins ^0.4
+      # (see the root pubspec.yaml).
+      - dependency-name: melos
+        update-types: ["version-update:semver-major"]
+
+  # The Cargo workspace: root Cargo.toml and its one Cargo.lock.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      # Slint is pinned exactly and bumped as one version in three places:
+      # [workspace.dependencies] in the root Cargo.toml, cargoWorkspaceShared
+      # in slint_build, slintVersion in slint_compiler's rust_glue.dart. This
+      # PR only touches the first; CI's pins test fails until the other two
+      # follow (AGENTS.md, "One Slint version, pinned exactly").
+      slint:
+        patterns: ["slint", "slint-*", "i-slint-*"]
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+        exclude-patterns: ["slint", "slint-*", "i-slint-*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]

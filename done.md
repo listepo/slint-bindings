@@ -35,3 +35,18 @@ the name changes. Wall time around the render call:
 The steady frame is under the 8 ms M1 bar in both builds. The demo process
 started and stayed up. A captured frame shows the sign-in form at the top-left
 of the 2× buffer.
+
+### T3. Vendor slint_dart and share the embedding core
+
+`slint_dart` (https://github.com/listepo/slint_dart) lives in this repo under
+`flutter/`. The checkout at `packages/slint_dart` is not modified. Shared
+embedding — the process-wide software platform, the Dart FFI event encoding,
+and the UI-thread guard — lives in `slint-embed`
+(`flutter/packages/slint/rust/embed`). `slint-dart-core` re-exports it, so the
+interpreter, the generated AOT glue and Skia keep calling `slint_dart_core::`.
+`slint-bindings-core` uses the same platform (reused buffer, host-owned
+pixels). The copy's Slint pin matches this repo (`=1.18.1`). Intel macOS
+(`x86_64-apple-darwin`) is not a build target.
+
+`just check` passes. `cargo test` for `slint-embed`, `slint-dart-core` and
+`slint-interpreter-ffi` passes in `flutter/`.

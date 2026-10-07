@@ -1,0 +1,17 @@
+name: todo_shared
+description: Shared code for examples/todo and examples/todo_skia — framework-free todo store, the Flutter page scaffolding around it, and a test helper.
+version: 0.0.1
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # For lib/testing.dart, which the apps import from their tests only.
+  test: ^1.25.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
