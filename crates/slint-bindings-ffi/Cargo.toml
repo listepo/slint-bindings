@@ -1,0 +1,22 @@
+[package]
+name = "slint-bindings-ffi"
+description = "C ABI over slint-bindings-core for Swift (static library) and WinUI (DLL) hosts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+name = "slint_bindings_ffi"
+# staticlib: linked into the Swift package (and later an XCFramework).
+# cdylib: loaded by the WinUI host through P/Invoke.
+# rlib: lets `cargo test` link the unit tests.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+slint-bindings-core = { workspace = true }
+
+[lints]
+workspace = true
