@@ -1,0 +1,4 @@
+module CSlintBindings [system] {
+    header "slint_bindings.h"
+    export *
+}
