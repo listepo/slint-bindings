@@ -4,9 +4,12 @@
 //! here blocks or spins a loop, so it fits any native run loop (AppKit's main
 //! thread, the WinUI dispatcher) as long as every call comes from that thread.
 
+use std::mem::{align_of, offset_of, size_of};
 use std::rc::Rc;
 
-use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgbaColor};
+use slint::platform::software_renderer::{
+    MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
+};
 use slint::platform::{PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, LogicalSize, PhysicalSize, SharedString};
 
@@ -21,6 +24,26 @@ const TRANSPARENT: PremultipliedRgbaColor = PremultipliedRgbaColor {
     blue: 0,
     alpha: 0,
 };
+
+// `PremultipliedRgbaColor` is `#[repr(C)]` RGBA8. These fail the build if a
+// future Slint release reorders the fields, which would make the frame copy
+// below write the wrong channels.
+const _: () = {
+    assert!(size_of::<PremultipliedRgbaColor>() == BYTES_PER_PIXEL);
+    assert!(align_of::<PremultipliedRgbaColor>() == 1);
+    assert!(offset_of!(PremultipliedRgbaColor, red) == 0);
+    assert!(offset_of!(PremultipliedRgbaColor, green) == 1);
+    assert!(offset_of!(PremultipliedRgbaColor, blue) == 2);
+    assert!(offset_of!(PremultipliedRgbaColor, alpha) == 3);
+};
+
+fn check_scale(scale: f32) -> Result<(), Error> {
+    if scale.is_finite() && scale > 0.0 {
+        Ok(())
+    } else {
+        Err(Error::BadScale { scale })
+    }
+}
 
 /// Mouse buttons the host can forward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +84,9 @@ pub struct EmbeddedHost<C: ComponentHandle> {
     width: u32,
     height: u32,
     scale: f32,
+    /// The pixel storage was replaced. The reused-buffer renderer would otherwise
+    /// repaint only dirty items and leave the rest of the new buffer transparent.
+    full_repaint: bool,
 }
 
 impl<C: ComponentHandle> EmbeddedHost<C> {
@@ -72,6 +98,7 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
         height: u32,
         scale: f32,
     ) -> Result<Self, Error> {
+        check_scale(scale)?;
         platform::ensure_installed()?;
         // A window left over from a component that failed half-way is not ours.
         drop(platform::take_created_window());
@@ -87,6 +114,7 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
             width: 0,
             height: 0,
             scale,
+            full_repaint: true,
         };
         host.resize(width, height, scale)?;
         Ok(host)
@@ -110,7 +138,14 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
     /// Resizes the frame. A zero dimension is clamped to one pixel, because
     /// hosts report zero-sized views during layout and Slint cannot render them.
     pub fn resize(&mut self, width: u32, height: u32, scale: f32) -> Result<(), Error> {
+        check_scale(scale)?;
+        // Hosts report 0×0 while a view is being laid out. Slint cannot render that.
         let (width, height) = (width.max(1), height.max(1));
+        // SwiftUI calls this on every layout pass. Reallocating the reused buffer
+        // when nothing changed throws away the previous frame and forces a full paint.
+        if width == self.width && height == self.height && scale == self.scale {
+            return Ok(());
+        }
         if scale != self.scale || self.width == 0 {
             self.dispatch(WindowEvent::ScaleFactorChanged {
                 scale_factor: scale,
@@ -123,7 +158,14 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
         self.dispatch(WindowEvent::Resized {
             size: LogicalSize::new(width as f32 / scale, height as f32 / scale),
         })?;
-        self.pixels = vec![TRANSPARENT; width as usize * height as usize];
+        let len = width as usize * height as usize;
+        if self.pixels.len() == len {
+            // Same pixel count (scale-only change): drop stale samples, keep the allocation.
+            self.pixels.fill(TRANSPARENT);
+        } else {
+            self.pixels = vec![TRANSPARENT; len];
+        }
+        self.full_repaint = true;
         self.window.request_redraw();
         Ok(())
     }
@@ -142,19 +184,30 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
             });
         }
         let stride = self.width as usize;
+        let full_repaint = self.full_repaint;
         let pixels = &mut self.pixels;
         let redrawn = self.window.draw_if_needed(|renderer| {
+            // NewBuffer paints every pixel. Switching back afterwards keeps later
+            // frames partial, which is what the reused buffer is for.
+            if full_repaint {
+                renderer.set_repaint_buffer_type(RepaintBufferType::NewBuffer);
+            }
             renderer.render(pixels, stride);
+            if full_repaint {
+                renderer.set_repaint_buffer_type(RepaintBufferType::ReusedBuffer);
+            }
         });
         if redrawn {
-            for (dst, px) in out
-                .as_chunks_mut::<BYTES_PER_PIXEL>()
-                .0
-                .iter_mut()
-                .zip(self.pixels.iter())
-            {
-                *dst = [px.red, px.green, px.blue, px.alpha];
+            self.full_repaint = false;
+        }
+        if redrawn {
+            let len = self.pixels.len() * BYTES_PER_PIXEL;
+            if len != needed {
+                return Err(Error::InvalidArgument(
+                    "internal frame size does not match the pixel buffer",
+                ));
             }
+            write_frame(out, &self.pixels);
         }
         Ok(Frame {
             redrawn,
@@ -233,6 +286,18 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
     }
 }
 
+/// Copies packed RGBA8 into `out`. `out` may be longer than one frame; only the frame is written.
+fn write_frame(out: &mut [u8], pixels: &[PremultipliedRgbaColor]) {
+    let len = pixels.len() * BYTES_PER_PIXEL;
+    let Some(dst) = out.get_mut(..len) else {
+        return;
+    };
+    // SAFETY: the const asserts above pin `PremultipliedRgbaColor` as packed RGBA8
+    // (`repr(C)`, 4 bytes, align 1), so this slice is the pixel bytes and nothing past them.
+    let src = unsafe { std::slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), len) };
+    dst.copy_from_slice(src);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +357,12 @@ mod tests {
         );
         let mut buf = vec![0u8; host.frame_len()];
         assert!(host.render(&mut buf)?.redrawn);
+        assert!(
+            buf.as_chunks::<BYTES_PER_PIXEL>()
+                .0
+                .iter()
+                .any(|px| px[3] > 0)
+        );
         Ok(())
     }
 
@@ -308,6 +379,31 @@ mod tests {
         let host = demo()?;
         host.component().set_name("Ivan".into());
         assert_eq!(host.component().get_name(), "Ivan");
+        Ok(())
+    }
+
+    #[test]
+    fn same_size_resize_keeps_the_painted_frame() -> Result<(), Error> {
+        let mut host = demo()?;
+        let mut buf = vec![0u8; host.frame_len()];
+        host.render(&mut buf)?;
+        host.resize(WIDTH, HEIGHT, 1.0)?;
+        assert!(!host.render(&mut buf)?.redrawn);
+        Ok(())
+    }
+
+    #[test]
+    fn non_positive_scale_is_rejected_and_the_frame_stays() -> Result<(), Error> {
+        let mut host = demo()?;
+        assert!(matches!(
+            host.resize(WIDTH, HEIGHT, 0.0),
+            Err(Error::BadScale { .. })
+        ));
+        assert!(matches!(
+            host.resize(WIDTH, HEIGHT, f32::NAN),
+            Err(Error::BadScale { .. })
+        ));
+        assert_eq!(host.size(), (WIDTH, HEIGHT));
         Ok(())
     }
 }
