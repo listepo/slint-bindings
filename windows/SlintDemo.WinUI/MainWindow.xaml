@@ -1,0 +1,15 @@
+<Window x:Class="SlintDemo.WinUI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:slint="using:SlintBindings.WinUI"
+        Title="Slint Bindings demo">
+    <Grid ColumnDefinitions="240,*">
+        <StackPanel Padding="12" Spacing="12">
+            <TextBlock Text="WinUI" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBox x:Name="NameBox" PlaceholderText="Name pushed into Slint" TextChanged="OnNameChanged" />
+            <TextBlock Text="Submitted from Slint" />
+            <ListView x:Name="Submissions" />
+        </StackPanel>
+        <slint:SlintPanel x:Name="Slint" Grid.Column="1" MinWidth="320" MinHeight="220" Loaded="OnSlintLoaded" />
+    </Grid>
+</Window>
