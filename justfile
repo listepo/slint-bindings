@@ -4,8 +4,8 @@ header_path := "swift/Sources/CSlintBindings/slint_bindings.h"
 
 default: check
 
-# Everything CI runs on macOS.
-check: fmt-check clippy test header-check swift-build
+# Everything CI runs on macOS. Cleanup is last so it does not invalidate the Swift link.
+check: fmt-check clippy nextest header-check swift-build swift-test tidy
 
 fmt-check:
     cargo fmt --check
@@ -13,8 +13,13 @@ fmt-check:
 clippy:
     cargo clippy --all-targets -- -D warnings
 
-test:
+nextest:
     cargo nextest run
+
+# Tests, then shrink `target/` once nothing still has to link against it.
+test: nextest tidy
+
+tidy:
     dunnage run target || test $? -eq 2
 
 # Regenerate the C header both hosts consume.
@@ -30,9 +35,15 @@ header-check:
     cbindgen --config crates/slint-bindings-ffi/cbindgen.toml --crate slint-bindings-ffi --output "$tmp" crates/slint-bindings-ffi
     diff -u {{header_path}} "$tmp"
 
-swift-build:
-    cargo build -p slint-bindings-ffi
+# The static library both SwiftPM products link. Built once per `just` invocation.
+swift-lib:
+    cargo rustc -p slint-bindings-ffi --crate-type staticlib
+
+swift-build: swift-lib
     cd swift && swift build
+
+swift-test: swift-lib
+    cd swift && swift test
 
 # Opens the SwiftUI demo window.
 swift-run: swift-build
@@ -40,4 +51,4 @@ swift-run: swift-build
 
 # On Windows: the DLL the WinUI projects load.
 windows-dll:
-    cargo build -p slint-bindings-ffi --target x86_64-pc-windows-msvc
+    cargo rustc -p slint-bindings-ffi --crate-type cdylib --target x86_64-pc-windows-msvc

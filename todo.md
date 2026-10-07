@@ -1,4 +1,3 @@
-- T2. Run and verify the macOS demo
 - T3. Share the embedding core with slint_dart
 - T4. macOS keyboard, IME and focus
 - T5. CI

@@ -10,7 +10,8 @@ Its supported embedding hook is a custom platform (`slint::platform`), which is
 what this project builds on.
 
 **Status:** M1 spike. The core renders on the CPU into a buffer the host owns;
-the macOS host builds; the Windows host is code only and has not been compiled.
+the macOS host builds and the demo path is covered by headless end-to-end tests;
+the Windows host is code only and has not been compiled.
 
 ## Layout
 
@@ -48,7 +49,7 @@ All calls happen on the host's UI thread: Slint objects are single-threaded.
 
 ```sh
 mise install      # Rust 1.99, cargo-nextest, just; cbindgen via `cargo install cbindgen`
-just check        # fmt, clippy, tests, header drift, swift build
+just check        # fmt, clippy, tests, header drift, swift build, swift test
 just swift-run    # opens the SwiftUI demo window
 ```
 

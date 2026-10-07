@@ -1,6 +1,9 @@
 // The Weft "login" sample shape: a screen with a form, one field and one button.
 // Kept tiny on purpose: M1 proves pixels and input cross the boundary, not widgets.
-import { Button, LineEdit, VerticalBox } from "std-widgets.slint";
+// Rectangles are fixed so a headless e2e can hit them without depending on the
+// style's layout metrics. Centers, logical px, origin top-left:
+//   name field (160, 64), Continue button (80, 112).
+import { Button, LineEdit } from "std-widgets.slint";
 
 export component DemoForm inherits Window {
     in-out property <string> name;
@@ -9,26 +12,40 @@ export component DemoForm inherits Window {
 
     preferred-width: 320px;
     preferred-height: 200px;
+    background: #f7f7f8;
 
-    VerticalBox {
-        Text {
-            text: "Sign in";
-            font-size: 20px;
+    Text {
+        x: 16px;
+        y: 12px;
+        text: "Sign in";
+        font-size: 20px;
+    }
+
+    LineEdit {
+        x: 16px;
+        y: 48px;
+        width: 288px;
+        height: 32px;
+        placeholder-text: "Name";
+        text <=> root.name;
+        accepted => { submit.clicked(); }
+    }
+
+    submit := Button {
+        x: 16px;
+        y: 96px;
+        width: 128px;
+        height: 32px;
+        text: "Continue";
+        clicked => {
+            root.submit-count += 1;
+            root.submitted(root.name);
         }
-        LineEdit {
-            placeholder-text: "Name";
-            text <=> root.name;
-            accepted => { submit.clicked(); }
-        }
-        submit := Button {
-            text: "Continue";
-            clicked => {
-                root.submit-count += 1;
-                root.submitted(root.name);
-            }
-        }
-        Text {
-            text: root.submit-count == 0 ? "" : "Submitted " + root.submit-count + " time(s)";
-        }
+    }
+
+    Text {
+        x: 16px;
+        y: 144px;
+        text: root.submit-count == 0 ? "" : "Submitted " + root.submit-count + " time(s)";
     }
 }

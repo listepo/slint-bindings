@@ -37,4 +37,13 @@ pub enum Error {
         /// Frame height in physical pixels.
         height: u32,
     },
+    /// `scale` was zero, negative, or not finite. Logical size is pixels divided by scale.
+    #[error("scale must be finite and greater than zero (got {scale})")]
+    BadScale {
+        /// The rejected scale, in physical pixels per logical point.
+        scale: f32,
+    },
+    /// The host passed a null pointer or another value this API rejects.
+    #[error("{0}")]
+    InvalidArgument(&'static str),
 }

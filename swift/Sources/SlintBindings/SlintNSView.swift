@@ -15,7 +15,9 @@ public final class SlintNSView: NSView {
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.contentsGravity = .resize
+        // Top-left keeps a frame that is one size behind the bounds where it is,
+        // instead of stretching it across the view until the new pixels arrive.
+        layer?.contentsGravity = .topLeft
         layer?.magnificationFilter = .nearest
         do {
             host = try SlintHost(pixelWidth: 1, pixelHeight: 1, scale: 1)
@@ -64,13 +66,22 @@ public final class SlintNSView: NSView {
             try host?.resize(pixelWidth: w, pixelHeight: h, scale: scale)
         } catch let error as SlintError {
             lastError = error
+            return
         } catch {
             lastError = SlintError(description: "\(error)")
+            return
         }
+        // The layer adopts the new bounds in this call. Present before returning so
+        // the displayed image matches them; the display link only has to catch animations.
+        present()
     }
 
     @objc private func step(_ link: CADisplayLink) {
         SlintHost.tick()
+        present()
+    }
+
+    private func present() {
         guard let host else { return }
         do {
             if let image = try host.renderIfNeeded().image {
@@ -176,10 +187,14 @@ enum SlintKeys {
     ]
 
     static func text(for event: NSEvent) -> String? {
-        guard let chars = event.charactersIgnoringModifiers, let first = chars.first else { return nil }
-        if let mapped = remap[first] { return mapped }
+        let produced = event.characters
+        let unmodified = event.charactersIgnoringModifiers
+        // Remap the characters that were typed. Shift-Tab arrives as BACKTAB in
+        // `characters`, while `charactersIgnoringModifiers` is a plain Tab, so
+        // looking there first never sees the entry.
+        if let produced, let first = produced.first, let mapped = remap[first] { return mapped }
         // Modified shortcuts (⌘C) need the unmodified key; plain typing needs the produced character.
-        if event.modifierFlags.contains(.command) { return chars }
-        return event.characters
+        if event.modifierFlags.contains(.command) { return unmodified }
+        return produced ?? unmodified
     }
 }

@@ -40,10 +40,13 @@ public sealed class SlintHost : IDisposable
 
     public void Resize(int pixelWidth, int pixelHeight, float scale)
     {
-        PixelWidth = Math.Max(pixelWidth, 1);
-        PixelHeight = Math.Max(pixelHeight, 1);
-        if (!NativeMethods.sb_host_resize(_handle, (uint)PixelWidth, (uint)PixelHeight, scale))
+        var width = Math.Max(pixelWidth, 1);
+        var height = Math.Max(pixelHeight, 1);
+        if (!NativeMethods.sb_host_resize(_handle, (uint)width, (uint)height, scale))
             throw new SlintException(NativeMethods.LastError());
+        // Only publish the size after the core accepts it, so a failed call leaves the previous frame.
+        PixelWidth = width;
+        PixelHeight = height;
     }
 
     /// <summary>Renders if the scene changed and writes premultiplied BGRA8 into <paramref name="bgra"/>.</summary>

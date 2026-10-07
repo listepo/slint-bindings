@@ -151,7 +151,7 @@ pub unsafe extern "C" fn sb_host_resize(
     guard(false, || {
         // SAFETY: forwarded caller contract; exclusive because the caller holds the only handle.
         let Some(h) = (unsafe { host.as_mut() }) else {
-            return Ok(false);
+            return Err(Error::InvalidArgument("a null host was passed"));
         };
         h.host.resize(width, height, scale)?;
         Ok(true)
@@ -171,10 +171,10 @@ pub unsafe extern "C" fn sb_host_render(host: *mut SbHost, buf: *mut u8, len: us
     guard(failed, || {
         // SAFETY: forwarded caller contract.
         let Some(h) = (unsafe { host.as_mut() }) else {
-            return Ok(failed);
+            return Err(Error::InvalidArgument("a null host was passed"));
         };
         if buf.is_null() {
-            return Ok(failed);
+            return Err(Error::InvalidArgument("a null pixel buffer was passed"));
         }
         // SAFETY: the caller guarantees `buf` is valid for `len` writable bytes.
         let out = unsafe { std::slice::from_raw_parts_mut(buf, len) };
@@ -204,7 +204,7 @@ unsafe fn with_host(host: *const SbHost, f: impl FnOnce(&SbHost) -> Result<(), E
     guard(false, || {
         // SAFETY: forwarded caller contract.
         let Some(h) = (unsafe { host_ref(host) }) else {
-            return Ok(false);
+            return Err(Error::InvalidArgument("a null host was passed"));
         };
         f(h)?;
         Ok(true)
@@ -296,7 +296,7 @@ pub unsafe extern "C" fn sb_host_key_pressed(host: *const SbHost, text: *const c
     guard(false, || {
         // SAFETY: forwarded caller contract.
         let Some(h) = (unsafe { host_ref(host) }) else {
-            return Ok(false);
+            return Err(Error::InvalidArgument("a null host was passed"));
         };
         // SAFETY: forwarded caller contract.
         h.host.key_pressed(unsafe { str_arg(text) })?;
@@ -313,7 +313,7 @@ pub unsafe extern "C" fn sb_host_key_released(host: *const SbHost, text: *const 
     guard(false, || {
         // SAFETY: forwarded caller contract.
         let Some(h) = (unsafe { host_ref(host) }) else {
-            return Ok(false);
+            return Err(Error::InvalidArgument("a null host was passed"));
         };
         // SAFETY: forwarded caller contract.
         h.host.key_released(unsafe { str_arg(text) })?;
@@ -327,11 +327,15 @@ pub unsafe extern "C" fn sb_host_key_released(host: *const SbHost, text: *const 
 /// `host` must be null or live; `name` null or NUL-terminated.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sb_demo_set_name(host: *const SbHost, name: *const c_char) {
-    // SAFETY: forwarded caller contract.
-    if let Some(h) = unsafe { host_ref(host) } {
+    guard((), || {
+        // SAFETY: forwarded caller contract.
+        let Some(h) = (unsafe { host_ref(host) }) else {
+            return Err(Error::InvalidArgument("a null host was passed"));
+        };
         // SAFETY: forwarded caller contract.
         h.host.component().set_name(unsafe { str_arg(name) }.into());
-    }
+        Ok(())
+    });
 }
 
 /// Registers `callback` for the demo form's `submitted(name)`; null clears it.
@@ -345,22 +349,25 @@ pub unsafe extern "C" fn sb_demo_on_submitted(
     callback: SbSubmittedFn,
     user_data: *mut c_void,
 ) {
-    // SAFETY: forwarded caller contract.
-    let Some(h) = (unsafe { host_ref(host) }) else {
-        return;
-    };
-    let component = h.host.component();
-    let Some(callback) = callback else {
-        component.on_submitted(|_| {});
-        return;
-    };
-    // Raw pointers are not `'static + Fn`-friendly; carry the address instead.
-    let user_data = user_data as usize;
-    component.on_submitted(move |name| {
-        let Ok(name) = CString::new(name.as_str()) else {
-            return;
+    guard((), || {
+        // SAFETY: forwarded caller contract.
+        let Some(h) = (unsafe { host_ref(host) }) else {
+            return Err(Error::InvalidArgument("a null host was passed"));
         };
-        callback(user_data as *mut c_void, name.as_ptr());
+        let component = h.host.component();
+        let Some(callback) = callback else {
+            component.on_submitted(|_| {});
+            return Ok(());
+        };
+        // Raw pointers are not `'static + Fn`-friendly; carry the address instead.
+        let user_data = user_data as usize;
+        component.on_submitted(move |name| {
+            let Ok(name) = CString::new(name.as_str()) else {
+                return;
+            };
+            callback(user_data as *mut c_void, name.as_ptr());
+        });
+        Ok(())
     });
 }
 
@@ -403,6 +410,9 @@ mod tests {
         unsafe {
             assert_eq!(sb_host_frame_len(ptr::null()), 0);
             assert!(!sb_host_pointer_moved(ptr::null(), 0.0, 0.0));
+            assert!(!sb_last_error().is_null());
+            assert!(sb_demo_new(WIDTH, HEIGHT, 0.0).is_null());
+            assert!(!sb_last_error().is_null());
         }
     }
 }
