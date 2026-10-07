@@ -36,5 +36,6 @@ let package = Package(
             ]
         ),
         .executableTarget(name: "SlintDemo", dependencies: ["SlintBindings"]),
+        .testTarget(name: "SlintBindingsTests", dependencies: ["SlintBindings"]),
     ]
 )
