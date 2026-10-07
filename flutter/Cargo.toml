@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/slint/rust",
+    "packages/slint/rust/embed",
+    "packages/slint_build/interpreter",
+    "packages/slint_generator/rust",
+    "packages/slint_interpreter/rust",
+    "packages/slint_skia/rust",
+    "packages/slint_testing/rust",
+]
+
+# Shared lint levels; every member opts in with `[lints] workspace = true`.
+# Run as: cargo clippy --workspace --exclude slint-skia-ffi --all-targets
+# (slint-skia-ffi builds all of Skia — excluded from default CI, see packages/slint_skia/README.md).
+# One Slint for every crate, pinned exactly: the generated AOT crate
+# (`slint_compiler`'s rust_glue.dart) pins the same version on its own, and
+# a drift between the two means the interpreter and the compiled output
+# speak different Slint dialects. Everything from [workspace.dependencies]
+# down is repeated verbatim in the workspace the build hooks stage
+# (slint_build's lib/src/cargo_workspace.dart, which a test compares with
+# this file): a package from pub.dev has no repo root to inherit from. Bump
+# all three together.
+[workspace.dependencies]
+slint = { version = "=1.18.1", default-features = false }
+slint-interpreter = { version = "=1.18.1", default-features = false }
+i-slint-compiler = "=1.18.1"
+i-slint-backend-testing = { version = "=1.18.1", default-features = false }
+# No default features: the default pulls in `softbuffer` + `wgpu-30`. softbuffer
+# 0.4.8 cannot compile for Linux targets — with no backend feature enabled
+# (Slint enables none) its dispatch enums are empty, rejected by current rustc
+# (E0392/E0004). Surfaces here are custom (metal/d3d/gl/android); Apple+Windows
+# re-enable softbuffer only so `skia_windowed` compiles (see slint-skia-ffi).
+i-slint-renderer-skia = { version = "=1.18.1", default-features = false }
+i-slint-core = "=1.18.1"
+serde_json = "1"
+spin_on = "0.1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"

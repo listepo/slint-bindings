@@ -19,6 +19,7 @@ the Windows host is code only and has not been compiled.
 | --- | --- |
 | `crates/slint-bindings-core` | Host-driven Slint platform: software renderer into a caller-owned RGBA buffer, input forwarding, timers. Holds the demo component. |
 | `crates/slint-bindings-ffi` | `sb_*` C ABI over the core (static library for Swift, DLL for WinUI). Forwards only. |
+| `flutter/` | Copy of [slint_dart](https://github.com/listepo/slint_dart). Its `slint-embed` crate (`flutter/packages/slint/rust/embed`) is the software platform, Dart event map and UI-thread guard shared with the core. |
 | `swift/` | SwiftPM package: `CSlintBindings` (C module over the generated header), `SlintBindings` (`SlintHost`, `SlintNSView`, `SlintDemoView`), `SlintDemo` app. |
 | `windows/` | WinUI 3 `SlintPanel` control and demo app (code-only skeleton). |
 
@@ -28,7 +29,7 @@ SwiftUI / AppKit ─┐                       ┌─ WinUI 3 (C#)
   SlintNSView     ├──▶ slint-bindings-ffi ◀┤   SlintHost (P/Invoke)
   SlintHost       │         │             │
                   │   slint-bindings-core │
-                  │   (custom Platform,   │
+                  │   (slint-embed        │
                   │    SoftwareRenderer)  │
 ```
 

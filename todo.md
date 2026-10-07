@@ -1,4 +1,3 @@
-- T3. Share the embedding core with slint_dart
 - T4. macOS keyboard, IME and focus
 - T5. CI
 - T6. WinUI host builds and runs (M2)

@@ -1,0 +1,43 @@
+import { TodoItem, TodoView } from "../../todo_shared/ui/todo_view.slint";
+
+// Re-exported: the generated Dart and the AOT glue name the row type.
+export { TodoItem }
+
+// Deliberately unreferenced by the Dart code: exists to prove the release
+// link hook tree-shakes components without a recorded use out of the dylib.
+export component UnusedGadget inherits Window {
+    preferred-width: 200px;
+    preferred-height: 100px;
+    title: "Never shipped";
+
+    in property <string> label: "unused";
+    callback poke();
+
+    Text { text: root.label; }
+}
+
+export component TodoApp inherits Window {
+    preferred-width: 400px;
+    preferred-height: 600px;
+    title: "Slint ♥ Flutter — Todo";
+
+    // Host (Dart) owns the list; this default renders before the host syncs.
+    in property <[TodoItem]> todo-model: [
+        { title: "Wire Slint into Flutter", checked: true },
+        { title: "Render this list", checked: false },
+    ];
+
+    // Named arguments carry through to the generated Dart signatures.
+    callback add-todo(title: string);
+    callback toggle-todo(index: int, checked: bool);
+    callback remove-done();
+
+    // The list itself is shared with the other example:
+    // examples/todo_shared/ui/todo_view.slint.
+    TodoView {
+        todo-model: root.todo-model;
+        add-todo(title) => { root.add-todo(title); }
+        toggle-todo(index, checked) => { root.toggle-todo(index, checked); }
+        remove-done => { root.remove-done(); }
+    }
+}

@@ -1,0 +1,298 @@
+# What `just check` runs locally, plus a pub.dev dry run of every package so a
+# publish problem shows up on the PR instead of on the release tag. A second
+# job builds the todo example in release (AOT) and checks tree-shaking. The
+# skia-* jobs compile Skia and prove slint_skia's GPU path per platform.
+name: CI
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # macOS: the host the native hooks, the AOT link and the tests are
+    # developed and verified on. Free for public repositories.
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # The hooks build workspace crates, so clippy and `flutter test` share
+      # the root target/ this caches.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Resolve workspace
+        run: dart pub get
+
+      # analyze, cargo fmt --check, clippy, dart + flutter tests.
+      # slint-skia-ffi and examples/todo_skia are excluded there: they build all of Skia.
+      - name: Check
+        run: dart run melos run check
+
+      - name: pub.dev dry run
+        run: |
+          set -euo pipefail
+          for dir in packages/*/; do
+            dart pub publish --dry-run -C "$dir"
+          done
+
+  release-macos:
+    # AOT tests self-skip under `flutter test`. This job is the e2e check:
+    # codegen + cargo staticlib + link hook + tree-shake canary.
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # Flutter macOS release builds a universal binary; cargo must have the
+      # x86_64 slice target even on arm64 runners.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Resolve workspace
+        run: dart pub get
+
+      - name: Enable use-recording for tree-shake
+        run: flutter config --enable-record-use
+
+      - name: Release build (AOT)
+        working-directory: examples/todo
+        env:
+          FLUTTER_RECORD_USE: "true"
+        run: flutter build macos --release
+
+      - name: Verify tree-shake
+        working-directory: examples/todo
+        run: |
+          set -euo pipefail
+          APP="build/macos/Build/Products/Release/todo_example.app"
+          AOT="$APP/Contents/Frameworks/slint_dart_aot.framework/Versions/A/slint_dart_aot"
+          SNAP="$APP/Contents/Frameworks/App.framework/Versions/A/App"
+          todo=$(nm -gU "$AOT" | grep -c slint_aot_todo_app || true)
+          unused=$(nm -gU "$AOT" | grep -c slint_aot_unused_gadget || true)
+          interp=$(grep -c -a SlintInterpreterFactory "$SNAP" || true)
+          src=$(grep -c -a 'export component TodoApp' "$SNAP" || true)
+          echo "todo_app symbols: $todo"
+          echo "unused_gadget symbols: $unused (must be 0)"
+          echo "interpreter in snapshot: $interp (must be 0)"
+          echo "slint source in snapshot: $src (must be 0)"
+          test "$todo" -gt 0
+          test "$unused" -eq 0
+          test "$interp" -eq 0
+          test "$src" -eq 0
+
+  # slint_skia's GPU path, one job per platform family. Building
+  # examples/todo_skia compiles all of Skia (slint-skia-ffi through
+  # slint_skia's hook) plus the slint_skia platform plugin. The crate's one
+  # GPU test renders a frame into the platform's texture and reads it back;
+  # it fails without a usable GPU API unless SLINT_SKIA_NO_GPU=1.
+  skia-apple:
+    runs-on: macos-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: x86_64-apple-darwin, aarch64-apple-ios-sim, x86_64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Resolve workspace
+        run: dart pub get
+
+      - name: Clippy (slint-skia-ffi)
+        run: cargo clippy -p slint-skia-ffi --all-targets -- -D warnings
+
+      - name: GPU test (Metal texture)
+        run: cargo test -p slint-skia-ffi
+
+      - name: Build macOS (Metal + darwin plugin)
+        working-directory: examples/todo_skia
+        run: flutter build macos --debug
+
+      - name: Build iOS simulator (Metal + darwin plugin)
+        working-directory: examples/todo_skia
+        run: flutter build ios --simulator --debug --no-codesign
+
+  skia-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      # GTK and ninja for the Flutter Linux build, fontconfig for Skia, and
+      # Mesa's EGL + GLES (llvmpipe) for the GPU test on a runner without a GPU.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-3-dev libfontconfig1-dev \
+            libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Resolve workspace
+        run: dart pub get
+
+      - name: Clippy (slint-skia-ffi)
+        run: cargo clippy -p slint-skia-ffi --all-targets -- -D warnings
+
+      - name: GPU test (headless EGL + read-back)
+        run: cargo test -p slint-skia-ffi
+
+      # The example ships no Linux runner: generate one for the build only.
+      - name: Build Linux (headless EGL + FlPixelBufferTexture plugin)
+        working-directory: examples/todo_skia
+        run: |
+          flutter create --platforms=linux --no-pub .
+          flutter build linux --debug
+
+  skia-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Resolve workspace
+        run: dart pub get
+
+      - name: Build APK (EGL on a SurfaceProducer + Java plugin)
+        working-directory: examples/todo_skia
+        run: flutter build apk --debug --target-platform android-arm64
+
+  skia-windows:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Resolve workspace
+        run: dart pub get
+
+      - name: Clippy (slint-skia-ffi)
+        run: cargo clippy -p slint-skia-ffi --all-targets -- -D warnings
+
+      - name: GPU test (D3D12 shared texture; WARP without a GPU)
+        run: cargo test -p slint-skia-ffi
+
+      # The example ships no Windows runner: generate one for the build only.
+      - name: Build Windows (D3D12 + GpuSurfaceTexture plugin)
+        working-directory: examples/todo_skia
+        run: |
+          flutter create --platforms=windows --no-pub .
+          flutter build windows --debug
+
+  revert-on-failure:
+    name: revert-on-failure
+    needs: [check, release-macos, skia-apple, skia-linux, skia-android, skia-windows]
+    if: >-
+      always()
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && contains(join(needs.*.result, ','), 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Revert commits from this push
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "No parent (new branch); skip revert"
+            exit 0
+          fi
+          # This job has only `contents: write`: pushing a revert that
+          # touches `.github/workflows/` needs the `workflows` permission
+          # and would fail. Skip instead of widening permissions — a human
+          # reverts workflow breakage.
+          if git diff --name-only "$BEFORE" "$AFTER" -- .github/ | grep -q .; then
+            echo "Push touched .github/; skip auto-revert"
+            exit 0
+          fi
+          subject=$(git log -1 --format=%s "$AFTER")
+          author=$(git log -1 --format=%an "$AFTER")
+          case "$subject" in
+            "ci: auto-revert"*) echo "Already an auto-revert; skip"; exit 0 ;;
+          esac
+          if [ "$author" = "github-actions[bot]" ]; then
+            echo "Last commit is from actions bot; skip"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          parent_count=$(git rev-list --parents -n 1 "$AFTER" | awk '{print NF}')
+          if [ "$parent_count" -gt 2 ]; then
+            git revert --no-edit -m 1 "$AFTER"
+          else
+            git revert --no-commit "$BEFORE".."$AFTER"
+            if git diff --cached --quiet; then
+              echo "Nothing to revert"
+              exit 0
+            fi
+            short=$(git rev-parse --short "$AFTER")
+            git commit -m "ci: auto-revert $short — main CI failed"
+          fi
+          git push origin HEAD:main

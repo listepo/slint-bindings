@@ -1,0 +1,20 @@
+[package]
+name = "slint-testing-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# Compile/instantiate and the JSON value bridge are shared with the runtime
+# backend; this crate adds only the testing platform and element queries.
+# No direct `slint` dependency: everything this crate touches comes through
+# slint-dart-interpreter, which already enables the features it needs.
+slint-dart-interpreter = { path = "../../slint_build/interpreter" }
+i-slint-backend-testing = { workspace = true, default-features = true }
+slint-dart-core = { path = "../../slint/rust" }
+
+[lints]
+workspace = true

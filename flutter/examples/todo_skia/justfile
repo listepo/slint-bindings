@@ -1,0 +1,19 @@
+# examples/todo_skia: only codegen and analysis run locally — flutter
+# run/build/test here triggers slint_skia's hook, which builds all of Skia.
+
+set shell := ["zsh", "-cu"]
+
+# List recipes.
+default:
+    @just --list --unsorted
+
+# ui/todo.slint → lib/todo.g.dart.
+codegen:
+    mise exec -- dart run build_runner build --delete-conflicting-outputs
+
+# The local check.
+analyze:
+    mise exec -- dart analyze .
+
+# Everything that runs without Skia.
+check: codegen analyze

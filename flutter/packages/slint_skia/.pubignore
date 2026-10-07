@@ -1,0 +1,10 @@
+# Local build artifacts (also gitignored; keep explicit for publish)
+build/
+.dart_tool/
+**/target/
+*.iml
+AGENTS.md
+# ffigen output nothing imports (skia_engine.dart looks symbols up by hand);
+# generated over system headers, it carries ~80 unused-field warnings that
+# pub.dev's static-analysis score counts.
+lib/src/bindings.g.dart

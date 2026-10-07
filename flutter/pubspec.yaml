@@ -1,0 +1,84 @@
+name: slint_dart_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+# Pub workspace: one resolution for every package and example. Melos runs on
+# top of it (`melos:` below) — scripts and package filters, not a second
+# dependency resolver.
+workspace:
+  - packages/slint
+  - packages/slint_build
+  - packages/slint_compiler
+  - packages/slint_generator
+  - packages/slint_interpreter
+  - packages/slint_skia
+  - packages/slint_testing
+  - packages/slint_patrol
+  - examples/todo
+  - examples/todo_shared
+  - examples/todo_skia
+
+dev_dependencies:
+  # 7.x, not 8.x: melos 8 wants cli_util ^0.5 while ffigen ^21 (a dev dep of
+  # the FFI packages, resolved workspace-wide) pins ^0.4.
+  melos: ^7.1.0
+
+melos:
+  # Run as `mise exec -- dart run melos run <script>`. Scripts invoke
+  # `dart run melos exec` with filter flags rather than a bare `melos` plus
+  # `packageFilters:` — the former needs no global activation and the latter
+  # prompts for a package unless `--no-select` is passed.
+  scripts:
+    analyze:
+      description: dart analyze, one package at a time (slint_skia's unused ffigen bindings are excluded in its analysis_options.yaml).
+      run: dart run melos exec --concurrency 1 --fail-fast -- dart analyze .
+
+    format:
+      description: Check Dart formatting across the workspace (no writes).
+      run: dart format --output=none --set-exit-if-changed .
+
+    format:fix:
+      description: Rewrite every Dart file in the workspace with dart format.
+      run: dart format .
+
+    test:
+      description: Every test that runs locally — Dart packages, then Flutter packages and examples/todo.
+      run: dart run melos run test:dart && dart run melos run test:flutter
+
+    test:dart:
+      description: dart test in the pure-Dart packages that have tests (slint_testing builds its crate through its hook).
+      run: dart run melos exec --concurrency 1 --fail-fast --no-flutter --dir-exists test -- dart test
+
+    test:flutter:
+      description: flutter test in Flutter packages with tests. todo_skia is excluded — its hook compiles all of Skia (not in default CI).
+      run: dart run melos exec --concurrency 1 --fail-fast --flutter --dir-exists test --ignore todo_skia_example -- flutter test
+
+    codegen:
+      description: Regenerate lib/*.g.dart (and *.aot.g.dart) from ui/*.slint in the examples.
+      run: dart run melos exec --concurrency 1 --fail-fast --depends-on build_runner -- dart run build_runner build --delete-conflicting-outputs
+
+    deps:unused:
+      description: Unused Rust dependencies (needs `cargo install cargo-machete`).
+      run: cargo machete
+
+    dart:unused:
+      description: Unused Dart declarations per package (needs `dart pub global activate dart_code_linter`). Advisory — the builder/hook entry points it lists are reached through build.yaml and hook/*.dart.
+      run: dart run melos exec --concurrency 1 --ignore slint_skia --ignore todo_skia_example -- dart pub global run dart_code_linter:metrics check-unused-code --no-fatal-unused --exclude "**/*.g.dart" lib
+
+    rust:fmt:
+      description: rustfmt every crate in the Cargo workspace.
+      run: cargo fmt --all
+
+    rust:clippy:
+      description: clippy every crate except slint-skia-ffi (building it builds all of Skia).
+      run: cargo clippy --workspace --exclude slint-skia-ffi --all-targets
+
+    rust:test:
+      description: cargo test every crate except slint-skia-ffi (building it builds all of Skia).
+      run: cargo test --workspace --exclude slint-skia-ffi
+
+    check:
+      description: What CI should run — analysis, Dart+Rust formatting, lints and tests.
+      run: dart run melos run analyze && dart run melos run format && cargo fmt --all --check && dart run melos run rust:clippy && dart run melos run rust:test && dart run melos run test

@@ -1,0 +1,32 @@
+name: SlintSkiaBindings
+description: Generated FFI bindings for slint-skia-ffi. Do not edit.
+output: lib/src/bindings.g.dart
+ffi-native:
+  asset-id: 'package:slint_skia/src/bindings.g.dart'
+functions:
+  include:
+    - 'slint_skia_.*'
+  # Platform-only (behind `#if` in the header) plus detach: declared by hand
+  # in lib/src/skia_native.dart so every platform sees the same bindings.
+  exclude:
+    - 'slint_skia_instance_attach_.*'
+    - 'slint_skia_instance_pixels'
+    - 'slint_skia_instance_detach'
+globals:
+  exclude:
+    - '.*'
+macros:
+  exclude:
+    - '.*'
+enums:
+  exclude:
+    - '.*'
+unnamed-enums:
+  exclude:
+    - '.*'
+headers:
+  entry-points:
+    - rust/include/slint_skia_ffi.h
+preamble: |
+  // dart format off
+  // ignore_for_file: type=lint

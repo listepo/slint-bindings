@@ -1,0 +1,95 @@
+# Publish packages/* to pub.dev when a version tag is pushed.
+# On each package Admin → Automated publishing:
+#   repository: listepo/slint_dart
+#   tag pattern: v{{version}}
+#   environment: pub.dev
+#
+# First version of each package must be published manually:
+#   mise exec -- dart pub login
+#   mise exec -- dart pub publish -C packages/<name>
+# Then enable trusted publishing; later `git tag vX.Y.Z && git push --tags`.
+#
+# Per package: skip if pubspec version ≠ tag (unchanged this release),
+# or if that version is already on pub.dev.
+name: Publish to pub.dev
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pub.dev
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # Configures OIDC credentials for subsequent `dart pub publish` calls.
+      # Before flutter-action on purpose: the action that runs last wins PATH,
+      # so `dart` below is Flutter's own SDK (the one the workspace resolves
+      # and validates with) and not a separately installed standalone Dart.
+      - uses: dart-lang/setup-dart@v1
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve workspace
+        run: dart pub get
+
+      - name: Publish changed packages (dependency order)
+        run: |
+          set -euo pipefail
+          pkgs=(
+            packages/slint
+            packages/slint_build
+            packages/slint_generator
+            packages/slint_testing
+            packages/slint_compiler
+            packages/slint_interpreter
+            packages/slint_skia
+            packages/slint_patrol
+          )
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          published=0
+          skipped=0
+
+          already_on_pub() {
+            local name="$1" version="$2"
+            local code
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              "https://pub.dev/api/packages/${name}/versions/${version}")
+            [[ "$code" == "200" ]]
+          }
+
+          for dir in "${pkgs[@]}"; do
+            name=$(basename "$dir")
+            yaml_ver=$(grep -E '^version:' "$dir/pubspec.yaml" | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")
+
+            if [[ "$yaml_ver" != "$ver" ]]; then
+              echo "Skip $name@$yaml_ver — version unchanged for tag $tag"
+              skipped=$((skipped + 1))
+              continue
+            fi
+
+            if already_on_pub "$name" "$yaml_ver"; then
+              echo "Skip $name@$yaml_ver — already on pub.dev"
+              skipped=$((skipped + 1))
+              continue
+            fi
+
+            echo "Publishing $name@$yaml_ver from $dir"
+            dart pub publish -C "$dir" --force
+            published=$((published + 1))
+          done
+
+          echo "Done: published=$published skipped=$skipped"
+          if [[ "$published" -eq 0 ]]; then
+            echo "No packages to publish for $tag (all skipped)."
+          fi

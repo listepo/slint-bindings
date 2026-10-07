@@ -1,0 +1,11 @@
+analyzer:
+  exclude:
+    - lib/src/bindings.g.dart
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+include: package:lints/recommended.yaml

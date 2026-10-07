@@ -1,0 +1,45 @@
+[package]
+name = "slint-skia-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+slint-dart-interpreter = { path = "../../slint_build/interpreter" }
+slint-dart-core = { path = "../../slint/rust" }
+slint = { workspace = true, features = ["compat-1-2", "std"] }
+i-slint-renderer-skia = { workspace = true }
+i-slint-core = { workspace = true }
+# `i_slint_renderer_skia::Surface::new` names `raw_window_handle` types and no
+# Slint crate re-exports them; Android also builds its window handle with it.
+raw-window-handle = { version = "0.6", features = ["std"] }
+
+# The D3D12 device, queue and shared render texture (see src/platform/d3d.rs).
+# `skia_safe::gpu::d3d` re-exports the interface types but not their
+# constructors; same 0.62 as skia-safe, so the types unify.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }
+
+[lints]
+workspace = true
+
+# Softbuffer is the Skia windowed backend we enable where OpenGL is not the
+# default (Apple + Windows) when we disable the crate default (to keep Linux
+# free of softbuffer 0.4.8's empty backend enums). Without it, Apple builds
+# fail inside i-slint-renderer-skia: `SkiaRenderer::new` calls
+# `create_default_surface` which is gated on `skia_windowed`. Feature
+# unification applies only on these targets.
+[target.'cfg(any(target_vendor = "apple", target_os = "windows"))'.dependencies.i-slint-renderer-skia]
+version = "=1.18.1"
+default-features = false
+features = ["softbuffer"]

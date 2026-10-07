@@ -1,0 +1,93 @@
+name: site
+
+# Build on PRs that touch the site; only main publishes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Activate jaspr_cli
+        run: dart pub global activate jaspr_cli
+
+      - name: Resolve site dependencies
+        working-directory: site
+        run: dart pub get
+
+      - name: Lint Dart
+        working-directory: site
+        run: dart analyze --fatal-infos
+
+      - name: Build static site
+        working-directory: site
+        run: jaspr build
+
+      - name: Prune non-docs artifacts from build
+        run: |
+          cd site/build/jaspr
+          # jaspr copies dart package assets into packages/; keep only doc pages
+          rm -rf content .dart_tool .build.manifest
+          if [ -d packages ]; then
+            find packages -mindepth 1 -maxdepth 1 ! -name 'slint*' ! -name 'index.html' -exec rm -rf {} +
+          fi
+
+      - name: Check build output
+        run: |
+          cd site/build/jaspr
+          test -s index.html || { echo "missing index.html" >&2; exit 1; }
+          grep -q 'slint_dart' index.html
+          grep -q 'Getting started' index.html
+          test -f styles/tokens.css
+          test -f styles/docs.css
+          test -f images/logo.svg
+          test -f favicon.svg
+          test -d guides
+          test -f packages/index.html
+          test -f packages/slint/index.html
+          test ! -d packages/analyzer
+          test ! -d content
+          # Project Pages subpath
+          grep -qE 'base[^>]+href="/slint_dart/"' index.html
+          echo "site ok: $(find . -name '*.html' | wc -l | tr -d ' ') html file(s)"
+
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
+        with:
+          path: site/build/jaspr
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

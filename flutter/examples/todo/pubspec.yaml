@@ -1,0 +1,39 @@
+name: todo_example
+description: Todo demo — a Slint UI rendered inside Flutter; interpreter (slint_interpreter) in debug, AOT-compiled (slint_compiler) in release/profile.
+version: 0.0.1
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.0
+  # The generated *.aot.g.dart imports @RecordUse from meta.
+  meta: ^1.19.0
+  slint: ^0.0.1
+  slint_generator: ^0.0.1
+  slint_interpreter: ^0.0.1
+  todo_shared: ^0.0.1
+  hooks: ^2.2.0
+  slint_compiler: ^0.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  test: ^1.25.0
+  build_runner: ^2.16.0
+  patrol_finders: ^3.6.0
+  slint_patrol: ^0.0.1
+  slint_testing: ^0.0.1
+
+flutter:
+  uses-material-design: true
+  # ui/todo.slint is deliberately not an asset: the builder embeds its source
+  # in todo.g.dart and the release build compiles it into the AOT dylib, so
+  # bundling the file too would ship the UI source for nothing. Flutter has no
+  # per-build-mode asset declaration, so "not bundled at all" is how a .slint
+  # stays out of a release bundle.

@@ -1,0 +1,16 @@
+[package]
+name = "slint-interpreter-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+slint-dart-core = { path = "../../slint/rust" }
+slint-dart-interpreter = { path = "../../slint_build/interpreter" }
+slint = { workspace = true, features = ["compat-1-2", "std", "renderer-software"] }
+
+[lints]
+workspace = true

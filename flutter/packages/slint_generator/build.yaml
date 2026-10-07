@@ -1,0 +1,7 @@
+builders:
+  slint:
+    import: "package:slint_generator/builder.dart"
+    builder_factories: ["slintBuilder"]
+    build_extensions: {"^ui/{{}}.slint": ["lib/{{}}.g.dart"]}
+    auto_apply: dependents
+    build_to: source

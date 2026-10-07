@@ -1,0 +1,46 @@
+# examples/todo: both backends' tests, release builds through the AOT hooks,
+# and the tree-shaking check. Debug = interpreter, release = AOT dylib.
+
+set shell := ["zsh", "-cu"]
+
+flutter := "mise exec -- flutter"
+app := "build/macos/Build/Products/Release/todo_example.app"
+aot := app + "/Contents/Frameworks/slint_dart_aot.framework/Versions/A/slint_dart_aot"
+snapshot := app + "/Contents/Frameworks/App.framework/Versions/A/App"
+
+# List recipes.
+default:
+    @just --list --unsorted
+
+# Regenerate lib/todo.g.dart and lib/todo.aot.g.dart from ui/todo.slint.
+codegen:
+    mise exec -- dart run build_runner build --delete-conflicting-outputs
+
+# Interpreter-backend tests (AOT tests self-skip here).
+test:
+    {{flutter}} test
+
+# Run in debug (interpreter) on macOS.
+run:
+    {{flutter}} run -d macos
+
+# Release build with use-recording on, so the link hook can tree-shake. Minutes (fat LTO).
+build-macos:
+    FLUTTER_RECORD_USE=true {{flutter}} build macos --release
+
+# iOS release build, unsigned.
+build-ios:
+    FLUTTER_RECORD_USE=true {{flutter}} build ios --release --no-codesign
+
+# Android arm64 release APK.
+build-android:
+    FLUTTER_RECORD_USE=true {{flutter}} build apk --release --target-platform android-arm64
+
+# After `just build-macos`: the shipped dylib exports TodoApp and not the UnusedGadget canary,
+# and the Dart snapshot carries no interpreter path or .slint text.
+verify-treeshake:
+    @echo "todo_app symbols:      $(nm -gU {{aot}} | grep -c slint_aot_todo_app)"
+    @echo "unused_gadget symbols: $(nm -gU {{aot}} | grep -c slint_aot_unused_gadget || true)  (must be 0)"
+    @echo "interpreter in snapshot: $(grep -c -a SlintInterpreterFactory {{snapshot}} || true)  (must be 0)"
+    @echo "slint source in snapshot: $(grep -c -a 'export component TodoApp' {{snapshot}} || true)  (must be 0)"
+    @ls -la {{aot}} | awk '{print "dylib bytes (universal):", $5}'

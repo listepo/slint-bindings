@@ -1,0 +1,15 @@
+[package]
+name = "slint-embed"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Shared Slint embedding: software platform, Dart FFI events, UI-thread guard."
+
+[dependencies]
+# Exact pin matches slint-bindings and the flutter/ workspace. Features are
+# named here so this crate does not inherit a different set from whichever
+# workspace loads it.
+slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-18", "renderer-software"] }
+
+[lints]
+workspace = true

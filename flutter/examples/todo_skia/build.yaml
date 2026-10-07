@@ -1,0 +1,11 @@
+# build_runner reads only lib/, test/, etc. by default; the .slint files live
+# in ui/ (not Dart, never bundled), so opt that tree in. The slint builders
+# then write lib/<name>.g.dart and lib/<name>.aot.g.dart from ui/<name>.slint.
+targets:
+  $default:
+    sources:
+      - lib/**
+      - test/**
+      - ui/**
+      - pubspec.yaml
+      - $package$

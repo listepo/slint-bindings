@@ -3424,6 +3424,7 @@ dependencies = [
  "i-slint-core",
  "slint",
  "slint-build",
+ "slint-embed",
  "thiserror 2.0.21",
 ]
 
@@ -3445,6 +3446,13 @@ dependencies = [
  "i-slint-compiler",
  "spin_on",
  "toml_edit",
+]
+
+[[package]]
+name = "slint-embed"
+version = "0.1.0"
+dependencies = [
+ "slint",
 ]
 
 [[package]]

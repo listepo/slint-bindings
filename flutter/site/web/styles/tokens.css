@@ -1,0 +1,47 @@
+/* slint_dart — M3 brand tokens (primary #0B57D0), dual theme */
+:root {
+  --sd-primary: #0B57D0;
+  --sd-primary-hover: #0842A0;
+  --sd-on-primary: #FFFFFF;
+  --sd-primary-soft: #D3E3FD;
+  --sd-secondary: #006B5F;
+  --sd-mint: #5CE1C8;
+  --sd-bg: #F8F9FA;
+  --sd-surface: #FFFFFF;
+  --sd-surface-2: #F1F3F4;
+  --sd-fg: #1C1C1E;
+  --sd-muted: #5F6368;
+  --sd-faint: #80868B;
+  --sd-outline: #DADCE0;
+  --sd-hairline: rgba(0, 0, 0, 0.08);
+  --sd-danger: #B3261E;
+  --sd-radius-s: 8px;
+  --sd-radius-m: 12px;
+  --sd-radius-l: 16px;
+  --sd-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 0 0 1px var(--sd-hairline);
+  --sd-shadow-md: 0 8px 24px rgba(0,0,0,0.06), 0 0 0 1px var(--sd-hairline);
+  --sd-focus: 0 0 0 2px var(--sd-surface), 0 0 0 4px rgba(11, 87, 208, 0.4);
+  --sd-font: "Inter", "Roboto", system-ui, -apple-system, sans-serif;
+  --sd-mono: "Roboto Mono", "SF Mono", ui-monospace, monospace;
+  color-scheme: light;
+}
+html[data-theme-resolved="dark"] {
+  --sd-primary: #A8C7FA;
+  --sd-primary-hover: #D3E3FD;
+  --sd-on-primary: #062E6F;
+  --sd-primary-soft: #0842A0;
+  --sd-secondary: #55DBC8;
+  --sd-bg: #0E0E10;
+  --sd-surface: #1C1C1E;
+  --sd-surface-2: #2C2C2E;
+  --sd-fg: #F5F5F7;
+  --sd-muted: #A1A1A6;
+  --sd-faint: #8E8E93;
+  --sd-outline: #38383A;
+  --sd-hairline: rgba(255, 255, 255, 0.08);
+  --sd-danger: #F2B8B5;
+  --sd-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px var(--sd-hairline);
+  --sd-shadow-md: 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px var(--sd-hairline);
+  --sd-focus: 0 0 0 2px var(--sd-surface), 0 0 0 4px rgba(168, 199, 250, 0.5);
+  color-scheme: dark;
+}
