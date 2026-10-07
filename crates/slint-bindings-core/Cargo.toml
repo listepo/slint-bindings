@@ -1,0 +1,24 @@
+[package]
+name = "slint-bindings-core"
+description = "Host-driven Slint embedding: a custom platform that renders into a caller-owned pixel buffer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+slint = { workspace = true }
+i-slint-core = { workspace = true }
+thiserror = { workspace = true }
+
+[build-dependencies]
+slint-build = { workspace = true }
+
+[lints]
+workspace = true
+
+[package.metadata.cargo-machete]
+# Present only to switch on image and SVG decoding (see the workspace manifest).
+ignored = ["i-slint-core"]

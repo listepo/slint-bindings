@@ -1,0 +1,34 @@
+// The Weft "login" sample shape: a screen with a form, one field and one button.
+// Kept tiny on purpose: M1 proves pixels and input cross the boundary, not widgets.
+import { Button, LineEdit, VerticalBox } from "std-widgets.slint";
+
+export component DemoForm inherits Window {
+    in-out property <string> name;
+    out property <int> submit-count;
+    callback submitted(string);
+
+    preferred-width: 320px;
+    preferred-height: 200px;
+
+    VerticalBox {
+        Text {
+            text: "Sign in";
+            font-size: 20px;
+        }
+        LineEdit {
+            placeholder-text: "Name";
+            text <=> root.name;
+            accepted => { submit.clicked(); }
+        }
+        submit := Button {
+            text: "Continue";
+            clicked => {
+                root.submit-count += 1;
+                root.submitted(root.name);
+            }
+        }
+        Text {
+            text: root.submit-count == 0 ? "" : "Submitted " + root.submit-count + " time(s)";
+        }
+    }
+}
