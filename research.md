@@ -1,0 +1,107 @@
+# Research: embedding Slint in SwiftUI/AppKit and WinUI 3
+
+All sources checked on 2026-10-07 against Slint 1.18.1 unless noted. Facts backed
+only by blogs, forum threads or other people's issues are marked **unverified**.
+
+## 1. Official bindings: verdict
+
+**Slint has no official Swift/SwiftUI/AppKit or WinUI/C# integration.**
+
+- Official language APIs in the repository: `api/cpp`, `api/node`, `api/python`,
+  `api/rs`, `api/slint-sc`, `api/wasm-interpreter`. No Swift, no .NET.
+  ([api/](https://github.com/slint-ui/slint/tree/master/api), master)
+- iOS: Rust-only "tech preview" since 1.12, through the winit backend and the Skia
+  renderer; whole apps, not views embedded in a Swift app.
+  ([iOS guide](https://docs.slint.dev/latest/docs/slint/guide/platforms/mobile/ios/),
+  [1.12 release](https://slint.dev/blog/slint-1.12-released)). C++ can target iOS
+  since PR [#13580](https://github.com/slint-ui/slint/pull/13580) (merged 2026-10-05, unreleased).
+- Swift bindings: open **draft** PR [#11167](https://github.com/slint-ui/slint/pull/11167)
+  "Swift Bridge Implementation" (+8499 lines, community author, label `language-binding`,
+  closes issue [#1005](https://github.com/slint-ui/slint/issues/1005)). The maintainer asked
+  to discuss design first because of its size; not merged as of 2026-10-07. A separate
+  community proof of concept: [illucid-matthew/slint-swift-bindings](https://github.com/illucid-matthew/slint-swift-bindings).
+- C#/.NET: issue [#4207](https://github.com/slint-ui/slint/issues/4207) (label `roadmap`) is
+  open; the upstream PR [#3913](https://github.com/slint-ui/slint/pull/3913) was closed as
+  stale. Third-party alpha: [microhobby/slint-dotnet](https://github.com/microhobby/slint-dotnet)
+  (NuGet `SlintDotnet` 1.7.1). Neither embeds into WinUI.
+- Embedding into a foreign native window from Rust: no documented API. Discussion
+  [#6585](https://github.com/slint-ui/slint/discussions/6585) (parent HWND / NSView) has no
+  official answer beyond a pointer to a third-party plugin project; issue
+  [#4640](https://github.com/slint-ui/slint/issues/4640) (the reverse: native window inside
+  Slint) is an open RFC.
+
+## 2. What Slint offers for embedding
+
+| Mechanism | Status | Use here |
+| --- | --- | --- |
+| `slint::platform::Platform` + `WindowAdapter` + `set_platform` ([docs](https://docs.rs/slint/1.18.1/slint/platform/index.html)) | Stable | The core: the host owns the loop, forwards `WindowEvent`s, calls `update_timers_and_animations` |
+| `SoftwareRenderer` / `MinimalSoftwareWindow` ([docs](https://docs.rs/slint/1.18.1/slint/platform/software_renderer/index.html)) | Stable | M1: render into a host-owned buffer (`PremultipliedRgbaColor` is `repr(C)`) |
+| `FemtoVGWGPURenderer::render_to_texture[_view]` ([docs](https://docs.rs/slint/1.18.1/slint/platform/femtovg_renderer/struct.FemtoVGWGPURenderer.html)) | Public in a custom platform; needs `unstable-wgpu-*` types | M3 candidate: render into a wgpu texture we present |
+| `unstable-wgpu-29/30`, `BackendSelector::require_wgpu_30`, `Image::try_from(wgpu::Texture)` ([docs](https://docs.rs/slint/1.18.1/slint/wgpu_30/index.html)) | Unstable, versioned by wgpu major | Sharing a wgpu device with the host renderer |
+| `raw-window-handle-06`, `Window::window_handle()` ([features](https://docs.rs/slint/1.18.1/slint/docs/cargo_features/index.html)) | Stable feature | Only for Slint-owned windows (winit); not for embedding into ours |
+| C++ `slint::platform::SkiaRenderer` + `NativeWindowHandle::from_appkit/from_win32` ([header](https://github.com/slint-ui/slint/blob/507b650e/api/cpp/include/slint-platform.h), [example](https://github.com/slint-ui/slint/tree/master/examples/cpp/platform_native)) | Public C++ API | Proof that rendering into a foreign `NSView`/`HWND` works; Rust has no public `SkiaRenderer` equivalent (`i-slint-renderer-skia` is internal) |
+| `ComponentContainer` / `ComponentFactory` ([docs](https://snapshots.slint.dev/master/docs/slint/guide/experimental/component-container/), [#2390](https://github.com/slint-ui/slint/issues/2390)) | Experimental, Rust only | Slint-in-Slint composition, not native embedding |
+| Backends: winit, Qt, linuxkms, android; renderers femtovg, skia, software, experimental vello ([features](https://docs.rs/slint/1.18.1/slint/docs/cargo_features/index.html), [1.18 release](https://slint.dev/blog/slint-1.18-released)) | — | We use none of the backends; we are the backend |
+
+Threading: "the event loop must run in the main thread, in most backends, and all the
+components must be created in the same thread" ([crate docs](https://docs.rs/slint/1.18.1/slint/index.html)).
+With a custom platform there is no Slint event loop; the host's UI thread plays that role.
+
+Accessibility: the `accessibility` feature exposes the tree to the OS through the
+built-in backends ([features](https://docs.rs/slint/1.18.1/slint/docs/cargo_features/index.html));
+a custom platform has to provide it itself (plan T14).
+
+## 3. Prior art in this workspace (reuse first)
+
+- `packages/slint_dart`: `slint-dart-core` (thread-affinity guard, FFI event encoding →
+  `WindowEvent`), `slint-interpreter-ffi` (software renderer → RGBA frames),
+  `slint-skia-ffi` (Skia → Metal texture over an IOSurface `CVPixelBuffer` on Apple, D3D12
+  shared texture + NT handle on Windows, EGL elsewhere). Checked at commit `12de634`.
+- `packages/slint-flutter`: `native/rust/embedded.rs`, the same host-driven software path
+  for Dart/Flutter. Checked at commit `4807387`.
+- `apps/weft`: `weft-core`, `weft-catalog`, `weft-swiftui` crates for the Weft milestone.
+
+## 4. Analogous projects
+
+- egui in SwiftUI through wgpu on a `CAMetalLayer`-backed `NSView`, `NSViewRepresentable`,
+  swift-bridge, XCFramework: [alex566/swiftui-egui-demo](https://github.com/alex566/swiftui-egui-demo)
+  and its article (**unverified** details).
+- wgpu Metal surfaces from a layer, and why not to replace an `NSView`'s own layer:
+  [wgpu #6107](https://github.com/gfx-rs/wgpu/commit/fb0cb1eb11663f8de023f6dd64128ed1f5342ec7),
+  [raw-window-metal](https://docs.rs/raw-window-metal/latest/raw_window_metal/).
+- wgpu on a WinUI 3 `SwapChainPanel`: `SurfaceTargetUnsafe::SwapChainPanel`
+  ([PR #4191](https://github.com/gfx-rs/wgpu/pull/4191),
+  [surface.rs](https://docs.rs/wgpu/latest/src/wgpu/api/surface.rs.html)).
+- Godot's proposal for the same WinUI embedding problem:
+  [godot-proposals #14848](https://github.com/godotengine/godot-proposals/issues/14848) (**unverified**).
+
+## 5. Host facts
+
+### macOS
+
+- Layer-backed `NSView` with CGImage contents is the lowest-risk CPU path; a flipped view
+  matches Slint's top-left origin. `NSView.displayLink(target:selector:)` (macOS 14) ticks
+  per display refresh.
+- GPU path: `CAMetalLayer` (wgpu `CoreAnimationLayer` target) or an IOSurface texture
+  rendered by Skia (slint_dart).
+
+### Windows
+
+- WinUI 3 has no supported way to host a child `HWND`; XAML composition draws over it
+  ([WindowsAppSDK discussion #3879](https://github.com/microsoft/WindowsAppSDK/discussions/3879), **unverified** maintainer-adjacent answer).
+- `SwapChainPanel` + `ISwapChainPanelNative::SetSwapChain`, which must be called on the
+  panel's UI thread; Microsoft recommends at most four swap chains per app
+  ([SetSwapChain](https://learn.microsoft.com/en-us/windows/win32/api/windows.ui.xaml.media.dxinterop/nf-windows-ui-xaml-media-dxinterop-iswapchainpanelnative-setswapchain),
+  [SwapChainPanel](https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.controls.swapchainpanel?view=windows-app-sdk-1.7)).
+- Windows App SDK on NuGet: 2.5.1 is the latest stable
+  ([NuGet API](https://api.nuget.org/v3-flatcontainer/microsoft.windowsappsdk/index.json)).
+
+## 6. FFI choices
+
+| Option | For | Against | Decision |
+| --- | --- | --- | --- |
+| Hand-written C ABI + cbindgen header | One ABI for Swift (module map) and C# (P/Invoke); no runtime; full control over threading and buffers | Wrappers written by hand per language | **M1–M4** |
+| UniFFI ([repo](https://github.com/mozilla/uniffi-rs), [Swift guide](https://mozilla.github.io/uniffi-rs/next/swift/overview.html)) | Generated Swift/Kotlin, C# via third party; already used by cox | Object model and per-call overhead are a poor fit for frame buffers and raw surface pointers; Swift 6 support partial per its docs | Revisit for the typed API (T13) |
+| swift-bridge | Idiomatic Swift both ways | Swift only | No |
+| Swift C++ interop over Slint's C++ API | Reuses `slint-platform.h`, `SkiaRenderer` | Drags CMake and the C++ SDK into SwiftPM; the community PoC hit `extern "C"` import limits | No |
+| csbindgen / generated P/Invoke | Keeps C# in sync with the header | Extra tool | T6 |
