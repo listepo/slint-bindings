@@ -12,7 +12,7 @@ host and must be built and fixed on Windows in M2.
 
 ```powershell
 mise install
-cargo build -p slint-bindings-ffi --target x86_64-pc-windows-msvc
+just windows-dll
 dotnet build windows/SlintDemo.WinUI -p:Platform=x64
 ```
 

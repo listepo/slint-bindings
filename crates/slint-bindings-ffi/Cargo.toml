@@ -10,10 +10,9 @@ publish.workspace = true
 
 [lib]
 name = "slint_bindings_ffi"
-# staticlib: linked into the Swift package (and later an XCFramework).
-# cdylib: loaded by the WinUI host through P/Invoke.
-# rlib: lets `cargo test` link the unit tests.
-crate-type = ["staticlib", "cdylib", "rlib"]
+# rlib only. A staticlib (Swift) or cdylib (WinUI) is a second link of this crate,
+# so the justfile asks for that artifact explicitly instead of every `cargo test`.
+crate-type = ["rlib"]
 
 [dependencies]
 slint-bindings-core = { workspace = true }
