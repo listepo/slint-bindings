@@ -31,7 +31,7 @@ If an `AGENTS.md` or `CLAUDE.md` exists higher in the tree, follow it too; on co
 
 ```sh
 mise install
-just check        # fmt-check, clippy -D warnings, nextest, header-check, swift build
+just check        # fmt-check, clippy -D warnings, nextest, header-check, swift build, swift test
 just header       # regenerate swift/Sources/CSlintBindings/slint_bindings.h
 just swift-run    # demo app
 ```

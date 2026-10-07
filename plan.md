@@ -6,7 +6,6 @@
 
 | # | Status | Priority | Complexity | Readiness | Agent |
 | --- | --- | --- | --- | --- | --- |
-| T2 | todo | P0 | 1 | 0% | |
 | T3 | todo | P0 | 4 | 0% | |
 | T4 | todo | P1 | 3 | 0% | |
 | T5 | todo | P1 | 2 | 0% | |
@@ -30,7 +29,7 @@ remaining tasks until the creator decides how to proceed.
 
 | Milestone | Goal | Tasks | Go/no-go checkpoint |
 | --- | --- | --- | --- |
-| M1: CPU spike | Pixels and input cross the boundary on macOS | T1 (done), T2 | The demo runs at 60 fps at 2x scale for a 800×600 pt view with no visible input lag. No-go: frame time above 8 ms on Apple Silicon, which means go straight to M3. |
+| M1: CPU spike | Pixels and input cross the boundary on macOS | T1 (done), T2 (done) | The demo runs at 60 fps at 2x scale for a 800×600 pt view with no visible input lag. No-go: frame time above 8 ms on Apple Silicon, which means go straight to M3. |
 | M2: Both hosts, shared core | Same core on WinUI; no duplicated code with slint_dart | T3, T4, T5, T6 | WinUI demo builds and runs; text fields take typed text on both hosts; CI is green. |
 | M3: GPU | GPU rendering into the host surface | T7, T8 | 4K view under 4 ms/frame; resize without tearing or black frames; no regressions in input. No-go on one OS keeps the CPU path there. |
 | M4: Distribution | Consumable packages | T9 | An app outside this repo adds the package (SwiftPM binary target, NuGet) and runs the demo. |
@@ -47,17 +46,6 @@ remaining tasks until the creator decides how to proceed.
 | IME and keyboard mapping differ per host. | CJK input and shortcuts break. | Dedicated tasks (T4, T6) with table-driven key tests. |
 | WinUI 3 cannot host a child `HWND` (XAML composition draws over it). | Only `SwapChainPanel` or bitmaps work. | Design for `SwapChainPanel` from the start (T8). |
 | `isolated deinit` and Swift 6 strict concurrency move quickly. | Build breaks on new Xcode. | CI on the newest Xcode (T5). |
-
-### T2. Run and verify the macOS demo
-
-The scaffold builds (`just check`) but the demo window was never opened. Run
-`just swift-run` and verify: the form paints at the right scale on a Retina and
-a 1x display; clicking the button appends to the SwiftUI list; typing into the
-field works for ASCII; resizing the window re-lays out without stretching;
-focus moves between the SwiftUI text field and the Slint field. Measure frame
-time with Instruments (Time Profiler on `sb_host_render`) at 800×600 pt, 2x.
-Done when the checklist passes and the numbers are written into this card,
-feeding the M1 checkpoint.
 
 ### T3. Share the embedding core with slint_dart
 
