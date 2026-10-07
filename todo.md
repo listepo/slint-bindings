@@ -1,0 +1,16 @@
+- T2. Run and verify the macOS demo
+- T3. Share the embedding core with slint_dart
+- T4. macOS keyboard, IME and focus
+- T5. CI
+- T6. WinUI host builds and runs (M2)
+- T7. GPU path on macOS (M3)
+- T8. GPU path on Windows (M3)
+- T9. Packaging (M4)
+- T10. Multiple hosts and popups
+- T11. Runtime components (generic API)
+- T12. Weft → Slint renderer
+- T13. Typed host APIs
+- T14. Accessibility spike
+- T15. iOS host
+- T16. Slint desktop app for Weft
+- T17. Web build

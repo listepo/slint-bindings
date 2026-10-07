@@ -1,0 +1,8 @@
+/target/
+/swift/.build/
+/swift/.swiftpm/
+*.xcframework/
+/windows/**/bin/
+/windows/**/obj/
+/windows/**/*.user
+.DS_Store

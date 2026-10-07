@@ -1,0 +1,6 @@
+# Toolchain for slint-bindings. `mise install`, then `just check`.
+[tools]
+# Same pin as weft, so the Weft milestone can share one toolchain.
+rust = { version = "1.99.0", components = "rustfmt,clippy" }
+"cargo:cargo-nextest" = "0.9.143"
+just = "1.58.0"
