@@ -23,6 +23,8 @@ slint-build = "=1.18.1"
 # it moves in lockstep with `slint` (exact pins on all three).
 i-slint-core = { version = "=1.18.1", default-features = false, features = ["image-decoders", "svg"] }
 thiserror = "2.0.21"
+# Dev-dependency of the FFI e2e: the demo frame is stored as a PNG snapshot.
+png = "0.18.1"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

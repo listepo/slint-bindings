@@ -204,3 +204,132 @@ fn retina_demo_frame_paints() {
         let _ = std::fs::write(path, bytes);
     }
 }
+
+/// The caret blinks, so these frames are taken with nothing focused. A person
+/// can open the PNG; the test compares pixels. `SB_UPDATE_SNAPSHOTS=1`
+/// rewrites the files when that picture is meant to change.
+fn snapshot_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/snapshots/{name}.png"))
+}
+
+fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, png::EncodingError> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    // The samples are already sRGB. The chunk stops a viewer from converting them.
+    encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(rgba)?;
+    writer.finish()?;
+    Ok(out)
+}
+
+fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), png::DecodingError> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder.read_info()?;
+    let mut buf = vec![0; reader.output_buffer_size().unwrap_or(0)];
+    let info = reader.next_frame(&mut buf)?;
+    buf.truncate(info.line_size * info.height as usize);
+    Ok((info.width, info.height, buf))
+}
+
+fn must<T, E: std::fmt::Display>(result: Result<T, E>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(err) => {
+            let message = err.to_string();
+            assert!(message.is_empty(), "{message}");
+            std::process::abort();
+        }
+    }
+}
+
+fn differing_pixels(left: &[u8], right: &[u8]) -> usize {
+    left.chunks(4)
+        .zip(right.chunks(4))
+        .filter(|(a, b)| a != b)
+        .count()
+}
+
+fn assert_snapshot(name: &str, width: u32, height: u32, rgba: &[u8]) {
+    let path = snapshot_path(name);
+    let encoded = must(encode_png(width, height, rgba));
+    if std::env::var_os("SB_UPDATE_SNAPSHOTS").is_some() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, &encoded);
+        return;
+    }
+    assert!(
+        path.is_file(),
+        "missing snapshot {}; set SB_UPDATE_SNAPSHOTS=1 to write it",
+        path.display()
+    );
+    let saved = std::fs::read(&path).ok();
+    let Some(saved) = saved else { return };
+    let (got_width, got_height, pixels) = must(decode_png(&saved));
+    assert_eq!(
+        (got_width, got_height, pixels.len()),
+        (width, height, rgba.len()),
+        "{name} snapshot size"
+    );
+    let diffs = differing_pixels(&pixels, rgba);
+    if diffs == 0 {
+        return;
+    }
+    let actual = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("../../target/snapshot-mismatches/{name}.png"));
+    if let Some(parent) = actual.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&actual, encoded);
+    assert_eq!(
+        diffs,
+        0,
+        "{name}: {diffs} pixels differ from {}; wrote {}",
+        path.display(),
+        actual.display()
+    );
+}
+
+fn paint(width: u32, height: u32, scale: f32, name: Option<&str>) -> Vec<u8> {
+    let host = open(width, height, scale);
+    let (frame, mut buf) = render(&host);
+    assert_eq!(frame.redrawn, 1);
+    if let Some(name) = name {
+        let c = CString::new(name).unwrap_or_default();
+        assert!(!c.to_bytes().is_empty());
+        // SAFETY: `host` is live; `c` is NUL-terminated.
+        unsafe { sb_demo_set_name(host.0, c.as_ptr()) }
+        let (frame, named) = render(&host);
+        assert_eq!(frame.redrawn, 1);
+        buf = named;
+    }
+    // A blinking caret or a running animation would repaint immediately.
+    let (again, _) = render(&host);
+    assert_eq!(again.redrawn, 0, "frame is still changing");
+    buf
+}
+
+#[test]
+fn sign_in_frame_matches_the_snapshot() {
+    let first = paint(FORM_WIDTH, FORM_HEIGHT, 1.0, None);
+    let second = paint(FORM_WIDTH, FORM_HEIGHT, 1.0, None);
+    assert_eq!(
+        differing_pixels(&first, &second),
+        0,
+        "the sign-in frame is not stable across two hosts"
+    );
+    assert_snapshot("sign-in", FORM_WIDTH, FORM_HEIGHT, &first);
+
+    let retina = paint(FORM_WIDTH * 2, FORM_HEIGHT * 2, RETINA_SCALE, None);
+    assert_snapshot("sign-in@2x", FORM_WIDTH * 2, FORM_HEIGHT * 2, &retina);
+}
+
+#[test]
+fn named_field_frame_matches_the_snapshot() {
+    let buf = paint(FORM_WIDTH, FORM_HEIGHT, 1.0, Some("Ada"));
+    assert_snapshot("sign-in-ada", FORM_WIDTH, FORM_HEIGHT, &buf);
+}

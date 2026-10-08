@@ -3432,6 +3432,7 @@ dependencies = [
 name = "slint-bindings-ffi"
 version = "0.1.0"
 dependencies = [
+ "png",
  "slint-bindings-core",
 ]
 

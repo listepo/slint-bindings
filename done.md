@@ -50,3 +50,15 @@ pixels). The copy's Slint pin matches this repo (`=1.18.1`). Intel macOS
 
 `just check` passes. `cargo test` for `slint-embed`, `slint-dart-core` and
 `slint-interpreter-ffi` passes in `flutter/`.
+
+### T18. Snapshot and screenshot tests
+
+The headless e2e checks that some pixel is opaque. A change to the form can
+pass that and still paint the wrong screen. The demo frame is compared to
+committed PNG snapshots, and the macOS view's presented image is compared to
+the same files.
+
+The caret blinks, so snapshots are the unfocused frame: the idle sign-in form
+at 1× and 2×, and the form after the name is set to "Ada".
+`SB_UPDATE_SNAPSHOTS=1` rewrites the PNGs when that picture is meant to change.
+`just check` passes.
