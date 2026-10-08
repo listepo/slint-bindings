@@ -7,15 +7,18 @@
 use std::rc::Rc;
 
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+use slint_embed::platform::InstallError;
 
 use crate::Error;
 
 /// Installs the embedding platform once for this thread.
 pub(crate) fn ensure_installed() -> Result<(), Error> {
-    // A foreign platform and a buffer-type clash both mean this process will
-    // not get the reused-buffer platform the hosts render through.
-    slint_embed::platform::ensure_installed(RepaintBufferType::ReusedBuffer)
-        .map_err(|_| Error::ForeignPlatform)
+    slint_embed::platform::ensure_installed(RepaintBufferType::ReusedBuffer).map_err(
+        |err| match err {
+            InstallError::ForeignPlatform => Error::ForeignPlatform,
+            InstallError::BufferMismatch => Error::BufferMismatch,
+        },
+    )
 }
 
 /// Takes the window the platform created most recently, if any.

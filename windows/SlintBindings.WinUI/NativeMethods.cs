@@ -14,13 +14,6 @@ internal struct SbFrame
     public byte Failed;
 }
 
-internal enum SbPointerButton : byte
-{
-    Left = 0,
-    Right = 1,
-    Middle = 2,
-}
-
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 internal delegate void SbSubmittedFn(IntPtr userData, IntPtr name);
 
@@ -46,11 +39,11 @@ internal static partial class NativeMethods
 
     [LibraryImport(Lib)]
     [return: MarshalAs(UnmanagedType.U1)]
-    internal static partial bool sb_host_pointer_pressed(IntPtr host, float x, float y, SbPointerButton button);
+    internal static partial bool sb_host_pointer_pressed(IntPtr host, float x, float y, byte button);
 
     [LibraryImport(Lib)]
     [return: MarshalAs(UnmanagedType.U1)]
-    internal static partial bool sb_host_pointer_released(IntPtr host, float x, float y, SbPointerButton button);
+    internal static partial bool sb_host_pointer_released(IntPtr host, float x, float y, byte button);
 
     [LibraryImport(Lib)]
     [return: MarshalAs(UnmanagedType.U1)]
@@ -71,6 +64,10 @@ internal static partial class NativeMethods
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
     [return: MarshalAs(UnmanagedType.U1)]
     internal static partial bool sb_host_key_released(IntPtr host, string text);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool sb_host_key_repeated(IntPtr host, string text);
 
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void sb_demo_set_name(IntPtr host, string name);

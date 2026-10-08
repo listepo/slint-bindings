@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+jobs:
+  rust:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    permissions:
+      contents: read
+      actions: write
+    uses: pyrlyn/ci/.github/workflows/ci-rust.yml@c875cd763ad0c4abbd936e480be5752330d3b66b # main 2026-10-07
+    with:
+      package-args: --workspace
+      feature-args: ""
+      tools: nextest
+      doc-tests: false
+      setup-command: |
+        if [ "${RUNNER_OS}" = Linux ]; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libfontconfig1-dev pkg-config
+        fi
+      test-command: cargo nextest run --workspace
+
+  macos:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
+      - name: cbindgen
+        run: cargo install cbindgen --locked --force
+      - name: just check
+        run: just check
+
+  windows-host:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
+      - name: FFI DLL
+        run: cargo rustc -p slint-bindings-ffi --crate-type cdylib --target x86_64-pc-windows-msvc
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+      - name: WinUI host
+        run: dotnet build windows/SlintDemo.WinUI -p:Platform=x64
+        env:
+          EnableWindowsTargeting: true
