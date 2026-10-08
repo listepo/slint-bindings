@@ -4,6 +4,39 @@
 - Embed Slint UIs in native hosts (SwiftUI/AppKit on macOS, WinUI 3 on Windows) through a
   host-driven custom Slint platform and a C ABI; then render Weft UI trees with it.
 
+## Cloud review findings (2026-10-08)
+
+New bugs, dead code and moves from a read-only Cursor cloud review of `main` (agent `bc-1c31008c-5ecc-5e7e-9c99-50640249894e`; full report: `cloud/slint-bindings.md` in the private `listepo/roadmap` repo). They take ids T19–T40, ordered P0, P1, P2. **confirmed** means seen in the tree; **suspected** means plausible from the code but not proven (the WinUI host was not compiled). Swift files are under `swift/Sources/SlintBindings/` and C# files under `windows/SlintBindings.WinUI/`; line numbers are as of the review. None of these is in the task table or `todo.md` yet: to take one, add its row and card the usual way.
+
+| ID | Priority | Kind | Status | Where | Fix |
+| --- | --- | --- | --- | --- | --- |
+| T19 | P0 | move | confirmed | `flutter/packages/slint/rust/embed` (`slint-embed`: platform, events, thread) → slint_dart's published crate, or a small repo / git dependency | This copy is the only Cargo path dependency on `flutter/`; upstream slint_dart still inlines the same code. Give `slint-embed` one home that both repos depend on. |
+| T20 | P1 | bug | confirmed | `crates/slint-bindings-ffi/src/lib.rs:71-84` | The C ABI never calls the UI-thread guard (the Dart interpreter does), and `slint_embed::thread` is unused. Call `slint_embed::thread::check()` at the start of every `sb_*` and report through `sb_last_error`. |
+| T21 | P1 | bug | confirmed | `swift/Sources/SlintBindings/SlintNSView.swift:79-81`; `windows/SlintBindings.WinUI/SlintPanel.cs:75-77`; `crates/slint-bindings-core/src/host.rs:218-221` | Every view calls `sb_tick()` once per vsync, and `sb_tick` advances global timers and animations, so N views tick N times per frame. Tick once per process/thread, then render each host (needed before T10). |
+| T22 | P1 | bug | confirmed | `crates/slint-bindings-ffi/src/lib.rs:42-60`, `:229-236`; `swift/Sources/CSlintBindings/slint_bindings.h:37`; `SlintHost.cs:75` | `SbPointerButton` is taken as a Rust enum from C, while the header declares `uint8_t` and C# casts an `int`; an out-of-range value is UB. Take `u8` and `try_from` 0..=2. |
+| T23 | P1 | bug | confirmed | `windows/SlintBindings.WinUI/SlintPanel.cs:43-45` | WinUI keyboard input is press-only text (`CharacterReceived` → `KeyPressed`; no `KeyReleased`, no `VirtualKey`). Map `PreviewKeyDown`/`KeyUp`, pair press and release, and do IME through `CoreTextEditContext` with T6. |
+| T24 | P1 | bug | confirmed | `SlintPanel.cs:36-39` | The WinUI wheel passes `MouseWheelDelta` (WHEEL_DELTA units, usually 120) as `dy`, but Slint expects logical pixels, and `dx` is always 0. Scale it and read the horizontal wheel. |
+| T25 | P1 | bug | confirmed | `SlintPanel.cs:48`, `:65-72` | WinUI ignores DPI / rasterization-scale changes (macOS handles them in `viewDidChangeBackingProperties`). Subscribe to `XamlRoot.Changed`. |
+| T26 | P1 | bug | confirmed | `SlintPanel.cs:65-72`; `SlintHost.cs:45-46` | A WinUI resize allocates a new `WriteableBitmap` without painting, and `Host.Resize` can throw with no catch on the UI thread. Catch it, surface the last error, then render and `Invalidate()` at the end of `SyncSize`. |
+| T27 | P1 | dead code | confirmed | `flutter/` (464 files; only `flutter/packages/slint/rust/embed` is used, `Cargo.toml:16`); `flutter/.github/workflows/ci.yml:6-8` never runs | Once T19 gives `slint-embed` its home, delete the rest of the `flutter/` tree, including its nested CI. |
+| T28 | P1 | move | confirmed | Weft → Slint rendering: T12, `plan.md:129-131` (`slint-bindings-weft`) → `weft-slint` in listepo/weft | weft's plan already generates Slint in `weft-slint` (weft T69). Re-scope T12 to consume it rather than add a second renderer here. |
+| T29 | P2 | bug | confirmed | `crates/slint-bindings-ffi/src/lib.rs:295-321`; `SlintNSView.swift:157-164` | No key-repeat path: Slint 1.18.1 has `WindowEvent::KeyPressRepeated`, the FFI has only press/release and Swift ignores `isARepeat`. Add `sb_host_key_repeated`. |
+| T30 | P2 | bug | confirmed | `crates/slint-bindings-ffi/src/lib.rs:95-100` | Invalid UTF-8 C strings silently become `""` (`to_str().unwrap_or_default()`). Return `InvalidArgument` through `sb_last_error`. |
+| T31 | P2 | bug | confirmed | `crates/slint-bindings-core/src/platform.rs:17-18` | `InstallError::BufferMismatch` is reported as `ForeignPlatform`. Give it its own error. |
+| T32 | P2 | bug | confirmed (churn); use-after-free suspected | `SlintDemoView.swift:31-36`; `SlintHost.swift:137-149` | `onSubmitted` is re-registered on every SwiftUI update, and the old box is released after registering. Register once in `makeNSView`. |
+| T33 | P2 | bug | confirmed | `crates/slint-bindings-ffi/tests/e2e.rs:270-271` | The snapshot test passes when the PNG read fails (`read().ok()`, then `return`). Fail on I/O errors. |
+| T34 | P2 | bug | confirmed | `SlintNSView.swift:120-121` | Middle-button drag is not forwarded (no `otherMouseDragged`). Route it like `mouseDragged`. |
+| T35 | P2 | bug | suspected | `SlintNSView.swift:138-140` | AppKit wheel deltas without precise scrolling are lines, but they are forwarded raw. Multiply by the line height when `!hasPreciseScrollingDeltas`. |
+| T36 | P2 | bug | suspected | `crates/slint-bindings-core/src/host.rs:277-279` | First-responder changes are sent as `WindowActiveChanged`, which Slint defines as window focus. Keep it as a documented approximation, or send it only when the host window activates. |
+| T37 | P2 | bug | suspected | `crates/slint-bindings-ffi/src/lib.rs:203-211`, `:173`, `:364-368` | A reentrant `sb_host_render` from a callback would alias `&SbHost` and `&mut SbHost` while `submitted` runs inside dispatch. Document "no reentrancy", or put the host in a `RefCell`. |
+| T38 | P2 | bug | suspected | `SlintPanel.cs:88-99` | WinUI never calls `CapturePointer`. Capture on press; release on up/cancel. |
+| T39 | P2 | move | confirmed | T16 "Slint desktop app for Weft" (`plan.md:155-160`) → weft studio (weft T69) | weft's plan builds the desktop app; re-scope or drop T16 here. |
+| T40 | P2 | move | suspected | FFI `guard` / `sb_last_error` (`crates/slint-bindings-ffi/src/lib.rs:63-84`) → a shared helper | Only if weft-studio-ffi wants the same panic/error slot (about 30 lines; taken from weft's plan, not checked here). |
+
+Already tracked here, not added again: the Metal/D3D12 texture backends should come from slint_dart's `slint-skia-ffi`, not a new copy; T7 and T8 already name slint_dart's `platform/metal.rs` and `platform/d3d.rs`.
+
+Not added: `slint_embed::events` is used only by slint_dart and stays there; `i-slint-core` is a deliberate dependency (feature unification), not dead.
+
 | # | Status | Priority | Complexity | Readiness | Agent |
 | --- | --- | --- | --- | --- | --- |
 | T4 | todo | P1 | 3 | 0% | |
