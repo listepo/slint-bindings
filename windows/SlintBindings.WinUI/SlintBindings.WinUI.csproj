@@ -16,7 +16,7 @@
   </ItemGroup>
   <ItemGroup>
     <!-- TODO(M2): pack the per-RID DLL as runtimes/win-x64/native/slint_bindings_ffi.dll
-         (built with `cargo build -p slint-bindings-ffi --target x86_64-pc-windows-msvc`). -->
+         (built by the just windows-dll recipe). -->
     <None Include="..\..\target\x86_64-pc-windows-msvc\debug\slint_bindings_ffi.dll"
           Condition="Exists('..\..\target\x86_64-pc-windows-msvc\debug\slint_bindings_ffi.dll')"
           CopyToOutputDirectory="PreserveNewest" Link="slint_bindings_ffi.dll" />

@@ -20,6 +20,7 @@ nextest:
 test: nextest tidy
 
 tidy:
+    command -v dunnage >/dev/null || exit 0
     dunnage run target || test $? -eq 2
 
 # Regenerate the C header both hosts consume.
