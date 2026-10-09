@@ -2,6 +2,7 @@
 
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace SlintBindings.WinUI;
 
@@ -10,7 +11,6 @@ public sealed class SlintException(string message) : Exception(message);
 public sealed class SlintHost : IDisposable
 {
     private IntPtr _handle;
-    private byte[] _rgba = [];
     private SbSubmittedFn? _submittedThunk; // keeps the delegate alive while Rust holds its pointer
     private GCHandle _self;
 
@@ -54,23 +54,14 @@ public sealed class SlintHost : IDisposable
     public unsafe bool RenderBgra(Span<byte> bgra, out bool animating)
     {
         var len = (int)NativeMethods.sb_host_frame_len(_handle);
-        if (_rgba.Length != len) _rgba = new byte[len];
-        SbFrame frame;
-        fixed (byte* p = _rgba) frame = NativeMethods.sb_host_render(_handle, p, (nuint)len);
-        if (frame.Failed != 0) throw new SlintException(NativeMethods.LastError());
-        animating = frame.Animating != 0;
-        if (frame.Redrawn == 0) return false;
         if (bgra.Length < len)
             throw new SlintException("BGRA buffer is shorter than the frame");
-        // TODO(M2): let the core render BGRA directly (WriteableBitmap and DXGI both want it) and drop this swizzle.
-        for (var i = 0; i + 3 < len; i += 4)
-        {
-            bgra[i] = _rgba[i + 2];
-            bgra[i + 1] = _rgba[i + 1];
-            bgra[i + 2] = _rgba[i];
-            bgra[i + 3] = _rgba[i + 3];
-        }
-        return true;
+        SbFrame frame;
+        fixed (byte* p = bgra)
+            frame = NativeMethods.sb_host_render_bgra(_handle, p, (nuint)bgra.Length);
+        if (frame.Failed != 0) throw new SlintException(NativeMethods.LastError());
+        animating = frame.Animating != 0;
+        return frame.Redrawn != 0;
     }
 
     public void PointerMoved(float x, float y) => NativeMethods.sb_host_pointer_moved(_handle, x, y);
@@ -86,11 +77,45 @@ public sealed class SlintHost : IDisposable
     }
     public void PointerExited() => NativeMethods.sb_host_pointer_exited(_handle);
     public void PointerScrolled(float x, float y, float dx, float dy) => NativeMethods.sb_host_pointer_scrolled(_handle, x, y, dx, dy);
-    public void KeyPressed(string text) => NativeMethods.sb_host_key_pressed(_handle, text);
+    /// <returns>False when Slint rejected the key (Tab with nowhere to go) or the call failed.</returns>
+    public bool KeyPressed(string text) => NativeMethods.sb_host_key_pressed(_handle, text);
     public void KeyReleased(string text) => NativeMethods.sb_host_key_released(_handle, text);
     public void KeyRepeated(string text) => NativeMethods.sb_host_key_repeated(_handle, text);
     public void FocusChanged(bool focused) => NativeMethods.sb_host_focus_changed(_handle, focused);
     public void SetName(string name) => NativeMethods.sb_demo_set_name(_handle, name);
+
+    public bool ImeStarted() => NativeMethods.sb_host_ime_started(_handle);
+    public bool ImeComposing() => NativeMethods.sb_host_ime_composing(_handle);
+    public bool ImeReplace(int rangeStart, int rangeEnd, string text, int selStart, int selEnd) =>
+        NativeMethods.sb_host_ime_replace(_handle, rangeStart, rangeEnd, text, selStart, selEnd);
+    public bool ImeSelect(int start, int end) => NativeMethods.sb_host_ime_select(_handle, start, end);
+    public bool ImeCompleted(bool canceled) => NativeMethods.sb_host_ime_completed(_handle, canceled);
+
+    public unsafe string ImeText()
+    {
+        Span<byte> buffer = stackalloc byte[4096];
+        fixed (byte* p = buffer)
+        {
+            if (!NativeMethods.sb_host_ime_text(_handle, p, (nuint)buffer.Length))
+                return "";
+        }
+        return Utf8(buffer);
+    }
+
+    public unsafe (int Start, int End) ImeSelection()
+    {
+        int start, end;
+        if (!NativeMethods.sb_host_ime_selection(_handle, &start, &end))
+            return (0, 0);
+        return (start, end);
+    }
+
+    private static string Utf8(ReadOnlySpan<byte> buffer)
+    {
+        var n = buffer.IndexOf((byte)0);
+        if (n < 0) n = buffer.Length;
+        return Encoding.UTF8.GetString(buffer[..n]);
+    }
 
     public void Dispose()
     {

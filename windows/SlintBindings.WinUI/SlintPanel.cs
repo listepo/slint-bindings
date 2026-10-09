@@ -12,6 +12,8 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.System;
+using Windows.UI.Core;
 
 namespace SlintBindings.WinUI;
 
@@ -21,6 +23,7 @@ public sealed class SlintPanel : UserControl
     private const float WheelDeltaToPoints = 40f / 120f;
 
     private readonly Image _image = new() { Stretch = Stretch.Fill };
+    private readonly SlintTextInput _textInput;
     private WriteableBitmap? _bitmap;
     private byte[] _bgra = [];
     private XamlRoot? _xamlRoot;
@@ -30,6 +33,7 @@ public sealed class SlintPanel : UserControl
 
     public SlintPanel()
     {
+        _textInput = new SlintTextInput(() => Host, () => SlintTextInput.ScreenCaret(this));
         Content = _image;
         IsTabStop = true;
         Loaded += OnLoaded;
@@ -54,8 +58,16 @@ public sealed class SlintPanel : UserControl
         };
         PointerExited += (_, _) => Host?.PointerExited();
         PointerWheelChanged += OnWheel;
-        GotFocus += (_, _) => Host?.FocusChanged(true);
-        LostFocus += (_, _) => Host?.FocusChanged(false);
+        GotFocus += (_, _) =>
+        {
+            Host?.FocusChanged(true);
+            _textInput.FocusEnter();
+        };
+        LostFocus += (_, _) =>
+        {
+            _textInput.FocusLeave();
+            Host?.FocusChanged(false);
+        };
         PreviewKeyDown += OnPreviewKeyDown;
         KeyUp += OnKeyUp;
         CharacterReceived += OnCharacterReceived;
@@ -77,6 +89,7 @@ public sealed class SlintPanel : UserControl
         _xamlRoot = XamlRoot;
         if (_xamlRoot is not null)
             _xamlRoot.Changed += OnXamlRootChanged;
+        _textInput.Attach();
         SyncSize();
         CompositionTarget.Rendering += OnRendering;
     }
@@ -87,6 +100,7 @@ public sealed class SlintPanel : UserControl
             _xamlRoot.Changed -= OnXamlRootChanged;
         _xamlRoot = null;
         CompositionTarget.Rendering -= OnRendering;
+        _textInput.Detach();
         Host?.Dispose();
         Host = null;
     }
@@ -152,16 +166,43 @@ public sealed class SlintPanel : UserControl
 
     private void OnPreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        var text = SlintKeys.Special(e.Key);
+        _textInput.NoteKeyDown();
+        // While a composition is open, Backspace, Enter, Escape and the arrows
+        // belong to the input method (delete a reading, confirm, move a candidate).
+        if (_textInput.IsComposing && ImeOwns(e.Key)) return;
+
+        var shift = IsDown(VirtualKey.Shift) || IsDown(VirtualKey.LeftShift) || IsDown(VirtualKey.RightShift);
+        var control = IsDown(VirtualKey.Control) || IsDown(VirtualKey.LeftControl) || IsDown(VirtualKey.RightControl);
+        var text = SlintKeys.Command(e.Key, shift);
+        if (text is null && control)
+            text = SlintKeys.Text(e.Key, "", shift, true);
         if (text is null) return;
-        if (e.KeyStatus.WasKeyDown) Host?.KeyRepeated(text);
-        else Host?.KeyPressed(text);
+
+        if (IsModifier(e.Key))
+        {
+            if (!e.KeyStatus.WasKeyDown) Host?.KeyPressed(text);
+        }
+        else if (e.KeyStatus.WasKeyDown)
+        {
+            Host?.KeyRepeated(text);
+        }
+        else
+        {
+            var accepted = Host?.KeyPressed(text) ?? false;
+            if (!accepted && text is "\t" or "\u0019")
+                MoveFocus(text == "\t");
+        }
         e.Handled = true;
     }
 
     private void OnKeyUp(object sender, KeyRoutedEventArgs e)
     {
-        var text = SlintKeys.Special(e.Key);
+        if (_textInput.IsComposing && ImeOwns(e.Key)) return;
+        var control = IsDown(VirtualKey.Control) || IsDown(VirtualKey.LeftControl) || IsDown(VirtualKey.RightControl)
+            || e.Key is VirtualKey.Control or VirtualKey.LeftControl or VirtualKey.RightControl;
+        var text = SlintKeys.Command(e.Key, false);
+        if (text is null && control)
+            text = SlintKeys.Text(e.Key, "", false, true);
         if (text is null) return;
         Host?.KeyReleased(text);
         e.Handled = true;
@@ -169,11 +210,45 @@ public sealed class SlintPanel : UserControl
 
     private void OnCharacterReceived(object sender, CharacterReceivedRoutedEventArgs e)
     {
+        if (_textInput.ConsumeCharacter())
+        {
+            e.Handled = true;
+            return;
+        }
         if (char.IsControl(e.Character) && e.Character is not ' ') return;
-        var text = e.Character.ToString();
-        Host?.KeyPressed(text);
-        Host?.KeyReleased(text);
+        var text = SlintKeys.Text((VirtualKey)0, e.Character.ToString(), false, false);
+        if (text is null) return;
+        if (e.KeyStatus.WasKeyDown) Host?.KeyRepeated(text);
+        else
+        {
+            Host?.KeyPressed(text);
+            Host?.KeyReleased(text);
+        }
         e.Handled = true;
+    }
+
+    private static bool IsDown(VirtualKey key)
+    {
+        var state = InputKeyboardSource.GetKeyStateForCurrentThread(key);
+        return state.HasFlag(CoreVirtualKeyStates.Down);
+    }
+
+    private static bool IsModifier(VirtualKey key) => key is
+        VirtualKey.Shift or VirtualKey.LeftShift or VirtualKey.RightShift or
+        VirtualKey.Control or VirtualKey.LeftControl or VirtualKey.RightControl or
+        VirtualKey.Menu or VirtualKey.LeftMenu or VirtualKey.RightMenu or
+        VirtualKey.LeftWindows or VirtualKey.RightWindows or
+        VirtualKey.CapitalLock;
+
+    private static bool ImeOwns(VirtualKey key) => key is
+        VirtualKey.Back or VirtualKey.Escape or VirtualKey.Enter or
+        VirtualKey.Space or VirtualKey.Left or VirtualKey.Right or
+        VirtualKey.Up or VirtualKey.Down;
+
+    private void MoveFocus(bool forward)
+    {
+        var direction = forward ? FocusNavigationDirection.Next : FocusNavigationDirection.Previous;
+        _ = FocusManager.TryMoveFocus(direction);
     }
 
     // Positions arrive in DIPs (logical pixels) relative to this control, which is what Slint expects.

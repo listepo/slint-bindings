@@ -62,3 +62,28 @@ The caret blinks, so snapshots are the unfocused frame: the idle sign-in form
 at 1× and 2×, and the form after the name is set to "Ada".
 `SB_UPDATE_SNAPSHOTS=1` rewrites the PNGs when that picture is meant to change.
 `just check` passes.
+
+### T6. WinUI host builds and runs (M2)
+
+The WinUI host compiles in CI. Virtual keys, IME composition and the per-RID
+DLL are in place. The demo window was not launched (no Windows desktop here).
+
+`VirtualKey` maps to Slint key text in `slint-bindings-core`, one row for every
+`slint::platform::Key`, same bar as the AppKit map. Shift+Tab is Backtab, the
+two sides of Shift, Control, Alt and the Windows key stay distinct, and
+Control names the physical key. The panel sends named keys from `KeyDown` /
+`KeyUp` and printable characters from `CharacterReceived`. A rejected Tab or
+Backtab moves focus with `FocusManager`.
+
+`CoreTextEditContext` is attached when `GetForCurrentView` succeeds. Its text
+store is only the preedit: replacements call `sb_host_ime_*`, which shows the
+reading and commits it on `CompositionCompleted`. A cancel drops it. Windows 10
+desktop has no CoreWindow, so that call fails and `CharacterReceived` still
+inserts text. A headless test commits 日 through the session and inserts a
+following character.
+
+`sb_host_render_bgra` writes premultiplied BGRA8, so `SlintHost.RenderBgra` no
+longer swizzles. `just windows-dll` (and the ARM64 triple) produces the DLL.
+`windows/Directory.Build.targets` copies it beside the app and under
+`runtimes/<rid>/native`. `just pinvoke-check` fails if `NativeMethods.cs` and
+the header disagree on `sb_*` names. Marshalling stays hand-written.

@@ -113,6 +113,16 @@ bool sb_host_resize(struct SbHost *host, uint32_t width, uint32_t height, float 
 struct SbFrame sb_host_render(struct SbHost *host, uint8_t *buf, size_t len);
 
 /**
+ * Renders into `buf` (premultiplied BGRA8, `len` bytes) if the scene changed.
+ *
+ * WinUI wants this order. macOS keeps using [`sb_host_render`].
+ *
+ * # Safety
+ * `host` must be null or live; `buf` must be valid for `len` writable bytes.
+ */
+struct SbFrame sb_host_render_bgra(struct SbHost *host, uint8_t *buf, size_t len);
+
+/**
  * Advances Slint timers and animations; call once per host frame tick.
  */
 void sb_tick(void);
@@ -220,6 +230,73 @@ bool sb_host_composition_update(const struct SbHost *host,
 bool sb_host_composition_commit(const struct SbHost *host, const char *text);
 
 /**
+ * The WinUI edit context opened a composition.
+ *
+ * # Safety
+ * `host` must be null or live.
+ */
+bool sb_host_ime_started(const struct SbHost *host);
+
+/**
+ * 1 while a WinUI composition is open.
+ *
+ * Returns false when nothing is composing or the call failed. A failure sets
+ * `sb_last_error`; a closed composition leaves it null.
+ *
+ * # Safety
+ * `host` must be null or live.
+ */
+bool sb_host_ime_composing(const struct SbHost *host);
+
+/**
+ * Writes the preedit the edit context should read back. Empty when nothing is composing.
+ *
+ * # Safety
+ * `host` must be null or live. `out` must be null or valid for `out_len` writable bytes.
+ */
+bool sb_host_ime_text(const struct SbHost *host, char *out, size_t out_len);
+
+/**
+ * Writes the preedit caret, in UTF-16 code units.
+ *
+ * # Safety
+ * `host` must be null or live. `start` and `end` must be null or writable.
+ */
+bool sb_host_ime_selection(const struct SbHost *host, int32_t *start, int32_t *end);
+
+/**
+ * Applies one `TextUpdating` from the WinUI edit context.
+ *
+ * `range_start`/`range_end` and `sel_start`/`sel_end` are UTF-16 carets inside
+ * the preedit. Returns false on failure; see `sb_last_error`.
+ *
+ * # Safety
+ * `host` must be null or live; `text` null or NUL-terminated.
+ */
+bool sb_host_ime_replace(const struct SbHost *host,
+                         int32_t range_start,
+                         int32_t range_end,
+                         const char *text,
+                         int32_t sel_start,
+                         int32_t sel_end);
+
+/**
+ * Applies one `SelectionUpdating` from the WinUI edit context.
+ *
+ * # Safety
+ * `host` must be null or live.
+ */
+bool sb_host_ime_select(const struct SbHost *host, int32_t start, int32_t end);
+
+/**
+ * Applies `CompositionCompleted`. `canceled` drops the preedit.
+ *
+ * # Safety
+ * `host` must be null or live.
+ */
+bool sb_host_ime_completed(const struct SbHost *host, bool canceled);
+
+/**
  * Writes the Slint key text for one AppKit key event into `out`.
  *
  * Returns true when a key was written. Returns false when the event is not a
@@ -236,6 +313,36 @@ bool sb_appkit_key_text(uint16_t key_code,
                         uint32_t modifiers,
                         char *out,
                         size_t out_len);
+
+/**
+ * Writes the Slint key text for a WinUI virtual key that has no character.
+ *
+ * Returns true when a key was written. Returns false when the host should
+ * wait for a character (`sb_last_error` is then null) or the call failed.
+ *
+ * # Safety
+ * `out` must be null or valid for `out_len` writable bytes.
+ */
+bool sb_virtual_key_command(uint16_t virtual_key, bool shift, char *out, size_t out_len);
+
+/**
+ * Writes the Slint key text for one WinUI key event into `out`.
+ *
+ * `character` is the layout-produced text, or empty. `shift` and `control`
+ * are the modifier state. Returns true when a key was written. Returns false
+ * when the event is not a Slint key (the buffer is then empty and
+ * `sb_last_error` is null) or the call failed.
+ *
+ * # Safety
+ * `character` must be null or NUL-terminated. `out` must be null or valid
+ * for `out_len` writable bytes.
+ */
+bool sb_virtual_key_text(uint16_t virtual_key,
+                         const char *character,
+                         bool shift,
+                         bool control,
+                         char *out,
+                         size_t out_len);
 
 /**
  * Sets the demo form's `name` property.

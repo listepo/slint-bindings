@@ -5,7 +5,7 @@ header_path := "swift/Sources/CSlintBindings/slint_bindings.h"
 default: check
 
 # Everything CI runs on macOS. Cleanup is last so it does not invalidate the Swift link.
-check: fmt-check clippy nextest header-check swift-build swift-test tidy
+check: fmt-check clippy nextest header-check pinvoke-check swift-build swift-test tidy
 
 fmt-check:
     cargo fmt --check
@@ -38,6 +38,18 @@ header-check:
     cbindgen --config crates/slint-bindings-ffi/cbindgen.toml --crate slint-bindings-ffi --output "$tmp" crates/slint-bindings-ffi
     diff -u {{header_path}} "$tmp"
 
+# Fail when NativeMethods.cs and the generated header disagree on sb_* exports.
+pinvoke-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    header="{{header_path}}"
+    cs="windows/SlintBindings.WinUI/NativeMethods.cs"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    grep -oE '\bsb_[a-z0-9_]+\(' "$header" | sed 's/($//' | sort -u > "$tmp/header"
+    grep -oE '\bsb_[a-z0-9_]+\(' "$cs" | sed 's/($//' | sort -u > "$tmp/cs"
+    diff -u "$tmp/header" "$tmp/cs"
+
 # The static library both SwiftPM products link. Built once per `just` invocation.
 swift-lib:
     cargo rustc -p slint-bindings-ffi --crate-type staticlib
@@ -53,5 +65,6 @@ swift-run: swift-build
     cd swift && swift run SlintDemo
 
 # On Windows: the DLL the WinUI projects load.
-windows-dll:
-    cargo rustc -p slint-bindings-ffi --crate-type cdylib --target x86_64-pc-windows-msvc
+# x64 is the default. ARM64: `just windows-dll aarch64-pc-windows-msvc`.
+windows-dll triple="x86_64-pc-windows-msvc":
+    cargo rustc -p slint-bindings-ffi --crate-type cdylib --target {{triple}}

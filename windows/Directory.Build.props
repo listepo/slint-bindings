@@ -1,0 +1,15 @@
+<Project>
+  <!-- Which slint_bindings_ffi.dll this build loads. Platform=ARM64 or
+       RuntimeIdentifier=win-arm64 selects the ARM64 DLL; everything else is x64.
+       `just windows-dll` builds x64. `just windows-dll aarch64-pc-windows-msvc`
+       builds ARM64. Cargo's folder is debug/release, not Debug/Release. -->
+  <PropertyGroup>
+    <SlintRid Condition="'$(RuntimeIdentifier)' == 'win-arm64' Or '$(Platform)' == 'ARM64'">win-arm64</SlintRid>
+    <SlintRid Condition="'$(SlintRid)' == ''">win-x64</SlintRid>
+    <SlintTargetTriple Condition="'$(SlintRid)' == 'win-arm64'">aarch64-pc-windows-msvc</SlintTargetTriple>
+    <SlintTargetTriple Condition="'$(SlintRid)' == 'win-x64'">x86_64-pc-windows-msvc</SlintTargetTriple>
+    <SlintCargoConfig Condition="'$(Configuration)' == 'Release'">release</SlintCargoConfig>
+    <SlintCargoConfig Condition="'$(SlintCargoConfig)' == ''">debug</SlintCargoConfig>
+    <SlintNativeDll>$(MSBuildThisFileDirectory)..\target\$(SlintTargetTriple)\$(SlintCargoConfig)\slint_bindings_ffi.dll</SlintNativeDll>
+  </PropertyGroup>
+</Project>

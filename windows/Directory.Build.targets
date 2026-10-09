@@ -1,0 +1,33 @@
+<Project>
+  <!-- The demo and the control both load the DLL by name from their output
+       directory. The runtimes/<rid>/native copy is the NuGet layout (M6 packs it). -->
+  <Target Name="RequireSlintNativeDll" BeforeTargets="BeforeBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(SlintNativeDll)')"
+           Text="Missing $(SlintNativeDll). From the repo root run `just windows-dll` for x64, or `just windows-dll aarch64-pc-windows-msvc` for ARM64." />
+  </Target>
+
+  <Target Name="CopySlintNativeDll" AfterTargets="Build" Condition="Exists('$(SlintNativeDll)')">
+    <Copy SourceFiles="$(SlintNativeDll)"
+          DestinationFiles="$(TargetDir)slint_bindings_ffi.dll"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(SlintNativeDll)"
+          DestinationFiles="$(TargetDir)runtimes\$(SlintRid)\native\slint_bindings_ffi.dll"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Stage the other RID too when that DLL was already built, so one output
+       tree can carry both. -->
+  <Target Name="StageOtherSlintRid" AfterTargets="CopySlintNativeDll">
+    <PropertyGroup>
+      <_OtherTriple Condition="'$(SlintRid)' == 'win-x64'">aarch64-pc-windows-msvc</_OtherTriple>
+      <_OtherRid Condition="'$(SlintRid)' == 'win-x64'">win-arm64</_OtherRid>
+      <_OtherTriple Condition="'$(SlintRid)' == 'win-arm64'">x86_64-pc-windows-msvc</_OtherTriple>
+      <_OtherRid Condition="'$(SlintRid)' == 'win-arm64'">win-x64</_OtherRid>
+      <_OtherDll>$(MSBuildThisFileDirectory)..\target\$(_OtherTriple)\$(SlintCargoConfig)\slint_bindings_ffi.dll</_OtherDll>
+    </PropertyGroup>
+    <Copy SourceFiles="$(_OtherDll)"
+          DestinationFiles="$(TargetDir)runtimes\$(_OtherRid)\native\slint_bindings_ffi.dll"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(_OtherDll)')" />
+  </Target>
+</Project>

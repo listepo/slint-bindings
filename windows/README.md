@@ -1,20 +1,25 @@
-# Windows host (WinUI 3) — code-only skeleton
+# Windows host (WinUI 3)
 
-Not compiled yet: M1 had no Windows machine. Everything here mirrors the Swift
-host and must be built and fixed on Windows in M2.
+The control mirrors the Swift host. CI compiles it (`dotnet build` after
+`just windows-dll`). Running the demo window still takes a Windows machine.
 
 | Project | What it is |
 | --- | --- |
 | `SlintBindings.WinUI` | `SlintPanel` control, `SlintHost` (owns the Rust handle), P/Invoke declarations |
 | `SlintDemo.WinUI` | Unpackaged demo app: a WinUI pane and a Slint pane sharing state |
 
-## Build (on Windows, untested)
+## Build (on Windows)
 
 ```powershell
 mise install
 just windows-dll
+# ARM64: just windows-dll aarch64-pc-windows-msvc
 dotnet build windows/SlintDemo.WinUI -p:Platform=x64
 ```
+
+The build copies `slint_bindings_ffi.dll` next to the app and under
+`runtimes/win-x64/native` (or `win-arm64` when `Platform=ARM64`). Both RIDs
+are staged when both DLLs have been built.
 
 ## Rendering path
 
@@ -28,9 +33,14 @@ dotnet build windows/SlintDemo.WinUI -p:Platform=x64
 
 ## TODO
 
-- [ ] Build and run on Windows; fix compile errors (M2).
-- [ ] Generate `NativeMethods.cs` from the header instead of hand-writing it (M2).
-- [ ] Keyboard: `VirtualKey` → Slint key text; IME via `CoreTextEditContext` (M2).
-- [ ] BGRA output from the core, drop the swizzle in `SlintHost.RenderBgra` (M2).
+- [x] Build on Windows CI (M2). Running the window is still manual.
+- [x] `just pinvoke-check` keeps `NativeMethods.cs` on the header's `sb_*` exports.
+      Marshalling stays hand-written.
+- [x] `VirtualKey` → Slint key text, including Shift+Tab, both modifier sides,
+      and F1–F24. The table is in Rust and covers every `slint::platform::Key`.
+- [x] IME via `CoreTextEditContext` when the OS provides one. Windows 10 desktop
+      has no CoreWindow, so that call fails and `CharacterReceived` still inserts text.
+- [x] BGRA output from the core (`sb_host_render_bgra`).
+- [x] Per-RID DLL copy (`runtimes/win-x64/native`, `runtimes/win-arm64/native`).
 - [ ] GPU path via `SwapChainPanel` (M3).
-- [ ] NuGet package with per-RID native DLLs; MSIX for the demo (M6).
+- [ ] NuGet package and MSIX for the demo (M6). The RID folders are the layout that pack will use.

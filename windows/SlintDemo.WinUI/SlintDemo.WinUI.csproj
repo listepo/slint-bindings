@@ -1,4 +1,4 @@
-<!-- WinUI 3 demo app hosting SlintPanel. Code-only skeleton: not compiled yet. -->
+<!-- WinUI 3 demo app hosting SlintPanel. -->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
