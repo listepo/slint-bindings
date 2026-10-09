@@ -61,14 +61,21 @@ struct KeyMapTests {
         #expect(try text("\r", ignoring: "\r") == "\n")
         #expect(try text("\u{7F}", ignoring: "\u{7F}") == "\u{08}")
         #expect(try text("\u{F728}", ignoring: "\u{F728}") == "\u{7F}")
-        // Shift-Tab: the produced character is BACKTAB, the unmodified one is Tab.
-        #expect(try text("\u{19}", ignoring: "\t") == "\t")
+        // Shift-Tab arrives as BACKTAB. That is Slint's Backtab, not Tab.
+        #expect(try text("\u{19}", ignoring: "\t") == "\u{19}")
         #expect(try text("a", ignoring: "a") == "a")
     }
 
     @Test func commandShortcutUsesTheUnmodifiedKey() throws {
         let event = try #require(keyEvent(characters: "c", ignoring: "c", flags: .command))
         #expect(SlintKeys.text(for: event) == "c")
+    }
+
+    @Test func homeAndModifiersUseTheVirtualKeyCode() throws {
+        let home = try #require(keyEvent(characters: "", ignoring: "", flags: [], keyCode: 0x73))
+        #expect(SlintKeys.text(for: home) == "\u{F729}")
+        let shift = try #require(keyEvent(characters: "", ignoring: "", flags: .shift, keyCode: 0x38))
+        #expect(SlintKeys.text(for: shift) == "\u{10}")
     }
 
     private func text(_ characters: String, ignoring: String) throws -> String? {
@@ -79,7 +86,8 @@ struct KeyMapTests {
     private func keyEvent(
         characters: String,
         ignoring: String,
-        flags: NSEvent.ModifierFlags
+        flags: NSEvent.ModifierFlags,
+        keyCode: UInt16 = 0
     ) -> NSEvent? {
         NSEvent.keyEvent(
             with: .keyDown,
@@ -91,7 +99,7 @@ struct KeyMapTests {
             characters: characters,
             charactersIgnoringModifiers: ignoring,
             isARepeat: false,
-            keyCode: 0
+            keyCode: keyCode
         )
     }
 }

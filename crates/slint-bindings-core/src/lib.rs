@@ -8,10 +8,12 @@
 
 mod demo;
 mod host;
+mod keys;
 mod platform;
 
 pub use demo::DemoForm;
 pub use host::{EmbeddedHost, Frame, PointerButton};
+pub use keys::{AppKitKey, MOD_COMMAND, MOD_CONTROL, MOD_OPTION, MOD_SHIFT, appkit_key_text};
 
 /// Everything that can go wrong while embedding.
 #[derive(Debug, thiserror::Error)]

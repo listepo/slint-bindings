@@ -11,6 +11,14 @@ public final class SlintNSView: NSView {
     public private(set) var lastError: SlintError?
     private var displayLink: CADisplayLink?
     private var trackingArea: NSTrackingArea?
+    /// Marked (preedit) text from the input context. Nil when nothing is composing.
+    private var markedText: String?
+    /// The key event `handleEvent` is currently interpreting, so `doCommand` can map it.
+    private var currentKeyEvent: NSEvent?
+    /// Set when `insertText` or `setMarkedText` already consumed the key.
+    private var inputClientHandled = false
+    /// Key code whose key-up should be dropped because the input method swallowed the press.
+    private var suppressKeyUpCode: UInt16?
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -151,17 +159,49 @@ public final class SlintNSView: NSView {
     }
 
     // MARK: Keyboard
-    // TODO(M2): adopt NSTextInputClient so IME composition (CJK, dead keys,
-    // the emoji picker) reaches Slint as preedit text instead of raw keys.
 
     public override func keyDown(with event: NSEvent) {
-        guard let text = SlintKeys.text(for: event) else { return super.keyDown(with: event) }
-        host?.keyPressed(text)
+        inputClientHandled = false
+        currentKeyEvent = event
+        // The input context turns dead keys, CJK and the emoji picker into
+        // `setMarkedText` / `insertText`, and named bindings (arrows, Tab)
+        // into `doCommand`. A false return means neither happened.
+        let handled = inputContext?.handleEvent(event) ?? false
+        if !handled && !inputClientHandled {
+            deliver(event)
+        } else if markedText != nil {
+            suppressKeyUpCode = event.keyCode
+        }
+        currentKeyEvent = nil
     }
 
     public override func keyUp(with event: NSEvent) {
+        if suppressKeyUpCode == event.keyCode {
+            suppressKeyUpCode = nil
+            return
+        }
         guard let text = SlintKeys.text(for: event) else { return super.keyUp(with: event) }
         host?.keyReleased(text)
+    }
+
+    public override func flagsChanged(with event: NSEvent) {
+        guard let text = SlintKeys.text(for: event) else { return }
+        if modifierIsDown(event) {
+            host?.keyPressed(text)
+        } else {
+            host?.keyReleased(text)
+        }
+    }
+
+    public override func doCommand(by selector: Selector) {
+        // Key bindings (moveLeft:, insertTab:, …) land here. The original
+        // event still carries the key code, so the same map names the key.
+        guard !inputClientHandled, let event = currentKeyEvent else {
+            super.doCommand(by: selector)
+            return
+        }
+        inputClientHandled = true
+        deliver(event)
     }
 
     public override func becomeFirstResponder() -> Bool {
@@ -170,31 +210,171 @@ public final class SlintNSView: NSView {
     }
 
     public override func resignFirstResponder() -> Bool {
+        // Leaving the view ends the composition. `unmarkText` commits a
+        // pending reading, which is what the input context does on focus loss.
+        if markedText != nil { unmarkText() }
         host?.focusChanged(false)
         return true
     }
+
+    private func deliver(_ event: NSEvent) {
+        guard let text = SlintKeys.text(for: event) else {
+            super.keyDown(with: event)
+            return
+        }
+        sendText(text)
+    }
+
+    private func sendText(_ text: String) {
+        let accepted = host?.keyPressed(text) ?? false
+        // Slint rejected Tab / Backtab: nothing else in the view can take focus.
+        if !accepted && sb_last_error() == nil && (text == "\t" || text == "\u{19}") {
+            moveFocus(forward: text == "\t")
+        }
+    }
+
+    private func moveFocus(forward: Bool) {
+        guard let window else { return }
+        if forward {
+            window.selectNextKeyView(self)
+        } else {
+            window.selectPreviousKeyView(self)
+        }
+    }
+
+    /// Device-dependent bits inside `NSEvent.modifierFlags` (the NX_* masks).
+    /// They say which side is down, so releasing Left Shift while Right Shift
+    /// is held does not look like a fresh press of the shared Shift flag.
+    private func modifierIsDown(_ event: NSEvent) -> Bool {
+        let bit: UInt
+        switch event.keyCode {
+        case 0x38: bit = 0x0002 // left shift
+        case 0x3C: bit = 0x0004 // right shift
+        case 0x3B: bit = 0x0001 // left control
+        case 0x3E: bit = 0x2000 // right control
+        case 0x3A: bit = 0x0020 // left option
+        case 0x3D: bit = 0x0040 // right option
+        case 0x37: bit = 0x0008 // left command
+        case 0x36: bit = 0x0010 // right command
+        case 0x39: return event.modifierFlags.contains(.capsLock)
+        default: return false
+        }
+        return event.modifierFlags.rawValue & bit != 0
+    }
 }
 
-/// AppKit key events to Slint key text. Slint's special keys share AppKit's
-/// function-key code points (arrows are U+F700…), so most characters pass
-/// through; only the few that differ are remapped.
-enum SlintKeys {
-    private static let remap: [Character: String] = [
-        "\r": "\n",          // Return
-        "\u{7F}": "\u{08}",  // AppKit's Backspace is DEL; Slint's is BS
-        "\u{F728}": "\u{7F}", // Forward delete
-        "\u{19}": "\t",      // Shift-Tab arrives as BACKTAB
-    ]
+extension SlintNSView: NSTextInputClient {
+    public func insertText(_ string: Any, replacementRange: NSRange) {
+        inputClientHandled = true
+        let text = Self.plain(string)
+        if markedText != nil {
+            markedText = nil
+            // The input method replaced the preedit with the committed string.
+            host?.commitComposition(text)
+            return
+        }
+        if text.isEmpty { return }
+        // A single key's character, or a multi-scalar insert such as an emoji.
+        if text.utf16.count == 1 {
+            sendText(text)
+        } else {
+            host?.commitComposition(text)
+        }
+    }
 
+    public func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        // `replacementRange` edits already-committed text. The preedit itself
+        // is replaced by the new marked string, which is the case the demo's
+        // input method uses (NSNotFound means "the current marked range").
+        _ = replacementRange
+        inputClientHandled = true
+        let text = Self.plain(string)
+        if text.isEmpty {
+            markedText = nil
+            host?.updateComposition("", utf16Start: -1, utf16End: -1)
+            return
+        }
+        markedText = text
+        let (start, end) = Self.utf16Bounds(selectedRange, limit: (text as NSString).length)
+        host?.updateComposition(text, utf16Start: start, utf16End: end)
+    }
+
+    public func unmarkText() {
+        let pending = markedText ?? ""
+        markedText = nil
+        if pending.isEmpty {
+            host?.updateComposition("", utf16Start: -1, utf16End: -1)
+        } else {
+            host?.commitComposition(pending)
+        }
+    }
+
+    public func selectedRange() -> NSRange {
+        NSRange(location: NSNotFound, length: 0)
+    }
+
+    public func markedRange() -> NSRange {
+        guard let markedText else { return NSRange(location: NSNotFound, length: 0) }
+        return NSRange(location: 0, length: (markedText as NSString).length)
+    }
+
+    public var hasMarkedText: Bool { markedText != nil }
+
+    public func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
+        guard let markedText else { return nil }
+        let marked = markedText as NSString
+        let full = NSRange(location: 0, length: marked.length)
+        let clipped = range.location == NSNotFound ? full : NSIntersectionRange(range, full)
+        if clipped.length == 0 { return nil }
+        actualRange?.pointee = clipped
+        return NSAttributedString(string: marked.substring(with: clipped))
+    }
+
+    public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        actualRange?.pointee = range
+        // Slint 1.18 does not tell a custom platform where the caret is, so the
+        // candidate window anchors to the text field's place in the demo form.
+        guard let window else { return .zero }
+        let local = NSRect(x: 16, y: 48, width: 2, height: 24)
+        return window.convertToScreen(convert(local, to: nil))
+    }
+
+    public func characterIndex(for point: NSPoint) -> Int { NSNotFound }
+
+    public func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
+
+    private static func plain(_ string: Any) -> String {
+        if let text = string as? String { return text }
+        if let text = string as? NSAttributedString { return text.string }
+        return ""
+    }
+
+    /// `NSNotFound` becomes `-1`, which the core treats as "no selection".
+    private static func utf16Bounds(_ range: NSRange, limit: Int) -> (Int32, Int32) {
+        guard range.location != NSNotFound else { return (-1, -1) }
+        let start = min(range.location, limit)
+        let end = min(range.location + range.length, limit)
+        return (Int32(start), Int32(end))
+    }
+}
+
+/// AppKit key events to Slint key text. The table lives in Rust
+/// (`appkit_key_text`) so the tests can cover every `slint::platform::Key`
+/// without a Mac.
+enum SlintKeys {
     static func text(for event: NSEvent) -> String? {
-        let produced = event.characters
-        let unmodified = event.charactersIgnoringModifiers
-        // Remap the characters that were typed. Shift-Tab arrives as BACKTAB in
-        // `characters`, while `charactersIgnoringModifiers` is a plain Tab, so
-        // looking there first never sees the entry.
-        if let produced, let first = produced.first, let mapped = remap[first] { return mapped }
-        // Modified shortcuts (⌘C) need the unmodified key; plain typing needs the produced character.
-        if event.modifierFlags.contains(.command) { return unmodified }
-        return produced ?? unmodified
+        var buffer = [CChar](repeating: 0, count: 16)
+        let mapped = buffer.withUnsafeMutableBufferPointer { raw -> Bool in
+            sb_appkit_key_text(
+                event.keyCode,
+                event.characters ?? "",
+                event.charactersIgnoringModifiers ?? "",
+                UInt32(truncatingIfNeeded: event.modifierFlags.rawValue),
+                raw.baseAddress,
+                raw.count
+            )
+        }
+        guard mapped else { return nil }
+        return String(cString: buffer)
     }
 }

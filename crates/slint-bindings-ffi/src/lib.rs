@@ -12,7 +12,9 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 
-use slint_bindings_core::{DemoForm, EmbeddedHost, Error, PointerButton};
+use slint_bindings_core::{
+    AppKitKey, DemoForm, EmbeddedHost, Error, PointerButton, appkit_key_text,
+};
 
 thread_local! {
     static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
@@ -289,6 +291,10 @@ pub unsafe extern "C" fn sb_host_focus_changed(host: *const SbHost, focused: boo
 
 /// A key went down; `text` is UTF-8 (the typed character or a Slint key code).
 ///
+/// Returns true when Slint accepted the key. Returns false when the scene
+/// rejected it or the call failed. A rejection leaves `sb_last_error` null, so
+/// the host can move focus (Tab with no next item). A failure sets it.
+///
 /// # Safety
 /// `host` must be null or live; `text` null or NUL-terminated.
 #[unsafe(no_mangle)]
@@ -299,12 +305,12 @@ pub unsafe extern "C" fn sb_host_key_pressed(host: *const SbHost, text: *const c
             return Err(Error::InvalidArgument("a null host was passed"));
         };
         // SAFETY: forwarded caller contract.
-        h.host.key_pressed(unsafe { str_arg(text) })?;
-        Ok(true)
+        h.host.key_pressed(unsafe { str_arg(text) })
     })
 }
 
-/// A key went up.
+/// A key went up. Returns false only when the call failed; see `sb_last_error`.
+/// A release the scene ignores is still a success.
 ///
 /// # Safety
 /// `host` must be null or live; `text` null or NUL-terminated.
@@ -318,6 +324,101 @@ pub unsafe extern "C" fn sb_host_key_released(host: *const SbHost, text: *const 
         // SAFETY: forwarded caller contract.
         h.host.key_released(unsafe { str_arg(text) })?;
         Ok(true)
+    })
+}
+
+/// Replaces the input-method preedit. `utf16_start`/`utf16_end` select inside
+/// `preedit` in UTF-16 code units (an AppKit `NSRange`). A negative start means
+/// no selection. An empty `preedit` clears the composition.
+///
+/// Returns false on failure; see `sb_last_error`.
+///
+/// # Safety
+/// `host` must be null or live; `preedit` null or NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_composition_update(
+    host: *const SbHost,
+    preedit: *const c_char,
+    utf16_start: i32,
+    utf16_end: i32,
+) -> bool {
+    guard(false, || {
+        // SAFETY: forwarded caller contract.
+        let Some(h) = (unsafe { host_ref(host) }) else {
+            return Err(Error::InvalidArgument("a null host was passed"));
+        };
+        // SAFETY: forwarded caller contract.
+        h.host
+            .update_composition(unsafe { str_arg(preedit) }, utf16_start, utf16_end)?;
+        Ok(true)
+    })
+}
+
+/// Inserts `text` and clears the preedit. Empty `text` only clears it.
+///
+/// Returns false on failure; see `sb_last_error`.
+///
+/// # Safety
+/// `host` must be null or live; `text` null or NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_composition_commit(
+    host: *const SbHost,
+    text: *const c_char,
+) -> bool {
+    guard(false, || {
+        // SAFETY: forwarded caller contract.
+        let Some(h) = (unsafe { host_ref(host) }) else {
+            return Err(Error::InvalidArgument("a null host was passed"));
+        };
+        // SAFETY: forwarded caller contract.
+        h.host.commit_composition(unsafe { str_arg(text) })?;
+        Ok(true)
+    })
+}
+
+/// Writes the Slint key text for one AppKit key event into `out`.
+///
+/// Returns true when a key was written. Returns false when the event is not a
+/// Slint key (the buffer is then an empty string and `sb_last_error` is null)
+/// or the call failed (`sb_last_error` is set).
+///
+/// # Safety
+/// `characters` and `ignoring` must be null or NUL-terminated. `out` must be
+/// null or valid for `out_len` writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_appkit_key_text(
+    key_code: u16,
+    characters: *const c_char,
+    ignoring: *const c_char,
+    modifiers: u32,
+    out: *mut c_char,
+    out_len: usize,
+) -> bool {
+    guard(false, || {
+        if out.is_null() || out_len == 0 {
+            return Err(Error::InvalidArgument("the key text buffer is missing"));
+        }
+        // SAFETY: forwarded caller contract.
+        let characters = unsafe { str_arg(characters) };
+        // SAFETY: forwarded caller contract.
+        let ignoring = unsafe { str_arg(ignoring) };
+        let text = appkit_key_text(AppKitKey {
+            key_code,
+            characters,
+            characters_ignoring_modifiers: ignoring,
+            modifiers,
+        });
+        let bytes = text.as_deref().unwrap_or("").as_bytes();
+        if bytes.len() >= out_len {
+            return Err(Error::InvalidArgument("the key text buffer is too small"));
+        }
+        // SAFETY: `out` is valid for `out_len` bytes and `bytes.len() < out_len`,
+        // so the copy and the trailing NUL stay inside the buffer.
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast(), bytes.len());
+            *out.add(bytes.len()) = 0;
+        }
+        Ok(text.is_some())
     })
 }
 
