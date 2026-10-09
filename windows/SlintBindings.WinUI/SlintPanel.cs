@@ -150,7 +150,7 @@ public sealed class SlintPanel : UserControl
         IntPtr native = 0;
         try
         {
-            native = Marshal.GetComInterfaceForObject<ISwapChainPanelNative>(_swapChain);
+            native = Marshal.GetComInterfaceForObject<SwapChainPanel, ISwapChainPanelNative>(_swapChain);
             var host = new SlintHost(1, 1, PixelScale, native);
             if (host.IsGpu)
             {

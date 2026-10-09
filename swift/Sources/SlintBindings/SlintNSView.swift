@@ -25,35 +25,49 @@ public final class SlintNSView: NSView {
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        install(prefersGpu: true)
+    }
+
+    /// `prefersGpu: false` keeps the CPU `CGImage` path. Snapshot tests use it;
+    /// the demo leaves the default, which is the Metal layer.
+    public init(frame frameRect: NSRect, prefersGpu: Bool) {
+        super.init(frame: frameRect)
+        install(prefersGpu: prefersGpu)
+    }
+
+    private func install(prefersGpu: Bool) {
         wantsLayer = true
         // Top-left keeps a frame that is one size behind the bounds where it is,
         // instead of stretching it across the view until the new pixels arrive.
         layer?.contentsGravity = .topLeft
         layer?.magnificationFilter = .nearest
-        let metal = CAMetalLayer()
-        metal.pixelFormat = .bgra8Unorm
-        metal.framebufferOnly = true
-        metal.isOpaque = false
-        metal.frame = bounds
-        layer?.addSublayer(metal)
-        metalLayer = metal
-        do {
-            host = try SlintHost(
-                metalLayer: Unmanaged.passUnretained(metal).toOpaque(),
-                pixelWidth: 1,
-                pixelHeight: 1,
-                scale: 1
-            )
-        } catch {
-            metal.removeFromSuperlayer()
-            metalLayer = nil
+        if prefersGpu {
+            let metal = CAMetalLayer()
+            metal.pixelFormat = .bgra8Unorm
+            metal.framebufferOnly = true
+            metal.isOpaque = false
+            metal.frame = bounds
+            layer?.addSublayer(metal)
+            metalLayer = metal
             do {
-                host = try SlintHost(pixelWidth: 1, pixelHeight: 1, scale: 1)
-            } catch let error as SlintError {
-                lastError = error
+                host = try SlintHost(
+                    metalLayer: Unmanaged.passUnretained(metal).toOpaque(),
+                    pixelWidth: 1,
+                    pixelHeight: 1,
+                    scale: 1
+                )
+                return
             } catch {
-                lastError = SlintError(description: "\(error)")
+                metal.removeFromSuperlayer()
+                metalLayer = nil
             }
+        }
+        do {
+            host = try SlintHost(pixelWidth: 1, pixelHeight: 1, scale: 1)
+        } catch let error as SlintError {
+            lastError = error
+        } catch {
+            lastError = SlintError(description: "\(error)")
         }
     }
 
