@@ -570,6 +570,7 @@ mod tests {
             !kept,
             "kept the wrapping tab; ordinals {before:?} -> {after:?}"
         );
+        assert_eq!(before, after, "undo left focus on a different item");
         host.key_released("\t")?;
         let _ = host.key_pressed("Q")?;
         host.key_released("Q")?;
@@ -580,7 +581,21 @@ mod tests {
         press(&host, 160.0, 64.0)?;
         // Backtab from the first control would wrap to the button, so the
         // view does not keep it and the letter still reaches the field.
+        let inner = i_slint_core::window::WindowInner::from_pub(host.window.window());
+        let before = inner
+            .focus_item
+            .borrow()
+            .upgrade()
+            .as_ref()
+            .map(focus_ordinal);
         assert!(!host.key_pressed("\u{19}")?);
+        let after = inner
+            .focus_item
+            .borrow()
+            .upgrade()
+            .as_ref()
+            .map(focus_ordinal);
+        assert_eq!(before, after, "undo left focus on a different item");
         let _ = host.key_pressed("Q")?;
         host.key_released("Q")?;
         assert_eq!(host.component().get_name().as_str(), "Q");
