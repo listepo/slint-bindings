@@ -60,8 +60,10 @@ public sealed class SlintHost : IDisposable
         if (frame.Failed != 0) throw new SlintException(NativeMethods.LastError());
         animating = frame.Animating != 0;
         if (frame.Redrawn == 0) return false;
+        if (bgra.Length < len)
+            throw new SlintException("BGRA buffer is shorter than the frame");
         // TODO(M2): let the core render BGRA directly (WriteableBitmap and DXGI both want it) and drop this swizzle.
-        for (var i = 0; i + 3 < len && i + 3 < bgra.Length; i += 4)
+        for (var i = 0; i + 3 < len; i += 4)
         {
             bgra[i] = _rgba[i + 2];
             bgra[i + 1] = _rgba[i + 1];
@@ -72,12 +74,21 @@ public sealed class SlintHost : IDisposable
     }
 
     public void PointerMoved(float x, float y) => NativeMethods.sb_host_pointer_moved(_handle, x, y);
-    public void PointerPressed(float x, float y, int button) => NativeMethods.sb_host_pointer_pressed(_handle, x, y, (SbPointerButton)button);
-    public void PointerReleased(float x, float y, int button) => NativeMethods.sb_host_pointer_released(_handle, x, y, (SbPointerButton)button);
+    public void PointerPressed(float x, float y, int button)
+    {
+        if (button is < 0 or > 2) throw new SlintException("pointer button must be 0, 1 or 2");
+        NativeMethods.sb_host_pointer_pressed(_handle, x, y, (byte)button);
+    }
+    public void PointerReleased(float x, float y, int button)
+    {
+        if (button is < 0 or > 2) throw new SlintException("pointer button must be 0, 1 or 2");
+        NativeMethods.sb_host_pointer_released(_handle, x, y, (byte)button);
+    }
     public void PointerExited() => NativeMethods.sb_host_pointer_exited(_handle);
     public void PointerScrolled(float x, float y, float dx, float dy) => NativeMethods.sb_host_pointer_scrolled(_handle, x, y, dx, dy);
     public void KeyPressed(string text) => NativeMethods.sb_host_key_pressed(_handle, text);
     public void KeyReleased(string text) => NativeMethods.sb_host_key_released(_handle, text);
+    public void KeyRepeated(string text) => NativeMethods.sb_host_key_repeated(_handle, text);
     public void FocusChanged(bool focused) => NativeMethods.sb_host_focus_changed(_handle, focused);
     public void SetName(string name) => NativeMethods.sb_demo_set_name(_handle, name);
 

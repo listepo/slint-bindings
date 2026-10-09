@@ -50,14 +50,8 @@ pub enum SbPointerButton {
     Middle = 2,
 }
 
-impl From<SbPointerButton> for PointerButton {
-    fn from(button: SbPointerButton) -> Self {
-        match button {
-            SbPointerButton::Left => Self::Left,
-            SbPointerButton::Right => Self::Right,
-            SbPointerButton::Middle => Self::Middle,
-        }
-    }
+fn pointer_button(button: u8) -> Result<PointerButton, Error> {
+    PointerButton::try_from(button)
 }
 
 fn set_error(msg: String) {
@@ -70,6 +64,10 @@ fn set_error(msg: String) {
 /// `fail` plus a message for `sb_last_error`.
 fn guard<T>(fail: T, body: impl FnOnce() -> Result<T, Error>) -> T {
     LAST_ERROR.with_borrow_mut(|slot| *slot = None);
+    if let Err(err) = slint_bindings_core::check_ui_thread() {
+        set_error(err.to_string());
+        return fail;
+    }
     match catch_unwind(AssertUnwindSafe(body)) {
         Ok(Ok(value)) => value,
         Ok(Err(err)) => {
@@ -92,12 +90,14 @@ unsafe fn host_ref<'a>(host: *const SbHost) -> Option<&'a SbHost> {
 
 /// # Safety
 /// `text` must be null or a NUL-terminated string valid for the call.
-unsafe fn str_arg<'a>(text: *const c_char) -> &'a str {
+unsafe fn str_arg<'a>(text: *const c_char) -> Result<&'a str, Error> {
     if text.is_null() {
-        return "";
+        return Ok("");
     }
     // SAFETY: non-null and NUL-terminated per the caller's contract.
-    unsafe { CStr::from_ptr(text) }.to_str().unwrap_or_default()
+    unsafe { CStr::from_ptr(text) }
+        .to_str()
+        .map_err(|_| Error::InvalidArgument("text is not valid UTF-8"))
 }
 
 /// Message of the last failed call on this thread, or null. Valid until the next `sb_*` call.
@@ -221,7 +221,7 @@ pub unsafe extern "C" fn sb_host_pointer_moved(host: *const SbHost, x: f32, y: f
     unsafe { with_host(host, |h| h.host.pointer_moved(x, y)) }
 }
 
-/// Pointer button pressed, in logical points.
+/// Pointer button pressed, in logical points. `button` is 0 left, 1 right, 2 middle.
 ///
 /// # Safety
 /// `host` must be null or live.
@@ -230,13 +230,17 @@ pub unsafe extern "C" fn sb_host_pointer_pressed(
     host: *const SbHost,
     x: f32,
     y: f32,
-    button: SbPointerButton,
+    button: u8,
 ) -> bool {
     // SAFETY: forwarded caller contract.
-    unsafe { with_host(host, |h| h.host.pointer_pressed(x, y, button.into())) }
+    unsafe {
+        with_host(host, |h| {
+            h.host.pointer_pressed(x, y, pointer_button(button)?)
+        })
+    }
 }
 
-/// Pointer button released, in logical points.
+/// Pointer button released, in logical points. `button` is 0 left, 1 right, 2 middle.
 ///
 /// # Safety
 /// `host` must be null or live.
@@ -245,10 +249,14 @@ pub unsafe extern "C" fn sb_host_pointer_released(
     host: *const SbHost,
     x: f32,
     y: f32,
-    button: SbPointerButton,
+    button: u8,
 ) -> bool {
     // SAFETY: forwarded caller contract.
-    unsafe { with_host(host, |h| h.host.pointer_released(x, y, button.into())) }
+    unsafe {
+        with_host(host, |h| {
+            h.host.pointer_released(x, y, pointer_button(button)?)
+        })
+    }
 }
 
 /// Pointer left the view.
@@ -299,7 +307,7 @@ pub unsafe extern "C" fn sb_host_key_pressed(host: *const SbHost, text: *const c
             return Err(Error::InvalidArgument("a null host was passed"));
         };
         // SAFETY: forwarded caller contract.
-        h.host.key_pressed(unsafe { str_arg(text) })?;
+        h.host.key_pressed(unsafe { str_arg(text) }?)?;
         Ok(true)
     })
 }
@@ -316,7 +324,24 @@ pub unsafe extern "C" fn sb_host_key_released(host: *const SbHost, text: *const 
             return Err(Error::InvalidArgument("a null host was passed"));
         };
         // SAFETY: forwarded caller contract.
-        h.host.key_released(unsafe { str_arg(text) })?;
+        h.host.key_released(unsafe { str_arg(text) }?)?;
+        Ok(true)
+    })
+}
+
+/// A held key auto-repeated; `text` is UTF-8 (the typed character or a Slint key code).
+///
+/// # Safety
+/// `host` must be null or live; `text` null or NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_key_repeated(host: *const SbHost, text: *const c_char) -> bool {
+    guard(false, || {
+        // SAFETY: forwarded caller contract.
+        let Some(h) = (unsafe { host_ref(host) }) else {
+            return Err(Error::InvalidArgument("a null host was passed"));
+        };
+        // SAFETY: forwarded caller contract.
+        h.host.key_repeated(unsafe { str_arg(text) }?)?;
         Ok(true)
     })
 }
@@ -333,7 +358,9 @@ pub unsafe extern "C" fn sb_demo_set_name(host: *const SbHost, name: *const c_ch
             return Err(Error::InvalidArgument("a null host was passed"));
         };
         // SAFETY: forwarded caller contract.
-        h.host.component().set_name(unsafe { str_arg(name) }.into());
+        h.host
+            .component()
+            .set_name(unsafe { str_arg(name) }?.into());
         Ok(())
     });
 }
@@ -362,13 +389,64 @@ pub unsafe extern "C" fn sb_demo_on_submitted(
         // Raw pointers are not `'static + Fn`-friendly; carry the address instead.
         let user_data = user_data as usize;
         component.on_submitted(move |name| {
+            // `name` is valid only for the duration of this callback; the host
+            // must copy it before returning.
             let Ok(name) = CString::new(name.as_str()) else {
+                set_error("submitted name contains an interior NUL".to_owned());
                 return;
             };
             callback(user_data as *mut c_void, name.as_ptr());
         });
         Ok(())
     });
+}
+
+/// Runs `f` on a dedicated thread so parallel `cargo test` shares one Slint owner.
+#[doc(hidden)]
+pub fn run_on_test_ui_thread<R, F>(f: F) -> R
+where
+    R: Send + 'static,
+    F: FnOnce() -> R + Send + 'static,
+{
+    use std::sync::mpsc::{self, Sender};
+    use std::sync::{Mutex, OnceLock};
+
+    struct Job {
+        run: Box<dyn FnOnce() + Send>,
+    }
+
+    static TX: OnceLock<Mutex<Sender<Job>>> = OnceLock::new();
+    let tx = TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<Job>();
+        let builder = std::thread::Builder::new().name("sb-test-ui".into());
+        match builder.spawn(move || {
+            while let Ok(job) = rx.recv() {
+                (job.run)();
+            }
+        }) {
+            Ok(_) => Mutex::new(tx),
+            Err(_) => std::process::abort(),
+        }
+    });
+    let (done_tx, done_rx) = mpsc::channel();
+    let guard = match tx.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    if guard
+        .send(Job {
+            run: Box::new(move || {
+                let _ = done_tx.send(f());
+            }),
+        })
+        .is_err()
+    {
+        std::process::abort();
+    }
+    match done_rx.recv() {
+        Ok(value) => value,
+        Err(_) => std::process::abort(),
+    }
 }
 
 #[cfg(test)]
@@ -380,39 +458,90 @@ mod tests {
 
     #[test]
     fn render_through_the_c_abi_writes_a_frame() {
-        let host = sb_demo_new(WIDTH, HEIGHT, 1.0);
-        assert!(!host.is_null());
-        // SAFETY: `host` is live until the free below.
-        unsafe {
-            let mut buf = vec![0u8; sb_host_frame_len(host)];
-            let frame = sb_host_render(host, buf.as_mut_ptr(), buf.len());
-            assert_eq!((frame.failed, frame.redrawn), (0, 1));
-            sb_host_free(host);
-        }
+        run_on_test_ui_thread(|| {
+            let host = sb_demo_new(WIDTH, HEIGHT, 1.0);
+            assert!(!host.is_null());
+            // SAFETY: `host` is live until the free below.
+            unsafe {
+                let mut buf = vec![0u8; sb_host_frame_len(host)];
+                let frame = sb_host_render(host, buf.as_mut_ptr(), buf.len());
+                assert_eq!((frame.failed, frame.redrawn), (0, 1));
+                sb_host_free(host);
+            }
+        });
     }
 
     #[test]
     fn short_buffer_fails_with_a_message() {
-        let host = sb_demo_new(WIDTH, HEIGHT, 1.0);
-        // SAFETY: `host` is live until the free below.
-        unsafe {
-            let mut buf = vec![0u8; 1];
-            let frame = sb_host_render(host, buf.as_mut_ptr(), buf.len());
-            assert_eq!(frame.failed, 1);
-            assert!(!sb_last_error().is_null());
-            sb_host_free(host);
-        }
+        run_on_test_ui_thread(|| {
+            let host = sb_demo_new(WIDTH, HEIGHT, 1.0);
+            // SAFETY: `host` is live until the free below.
+            unsafe {
+                let mut buf = vec![0u8; 1];
+                let frame = sb_host_render(host, buf.as_mut_ptr(), buf.len());
+                assert_eq!(frame.failed, 1);
+                assert!(!sb_last_error().is_null());
+                sb_host_free(host);
+            }
+        });
     }
 
     #[test]
     fn null_host_is_refused_not_dereferenced() {
-        // SAFETY: null is part of every entry point's contract.
-        unsafe {
-            assert_eq!(sb_host_frame_len(ptr::null()), 0);
-            assert!(!sb_host_pointer_moved(ptr::null(), 0.0, 0.0));
-            assert!(!sb_last_error().is_null());
-            assert!(sb_demo_new(WIDTH, HEIGHT, 0.0).is_null());
-            assert!(!sb_last_error().is_null());
-        }
+        run_on_test_ui_thread(|| {
+            // SAFETY: null is part of every entry point's contract.
+            unsafe {
+                assert_eq!(sb_host_frame_len(ptr::null()), 0);
+                assert!(!sb_host_pointer_moved(ptr::null(), 0.0, 0.0));
+                assert!(!sb_last_error().is_null());
+                assert!(sb_demo_new(WIDTH, HEIGHT, 0.0).is_null());
+                assert!(!sb_last_error().is_null());
+            }
+        });
+    }
+
+    #[test]
+    fn invalid_pointer_button_is_refused() {
+        run_on_test_ui_thread(|| {
+            let host = sb_demo_new(WIDTH, HEIGHT, 1.0);
+            // SAFETY: `host` is live until the free below.
+            unsafe {
+                assert!(!sb_host_pointer_pressed(host, 0.0, 0.0, 9));
+                assert!(!sb_last_error().is_null());
+                sb_host_free(host);
+            }
+        });
+    }
+
+    #[test]
+    fn invalid_utf8_key_text_is_refused() {
+        run_on_test_ui_thread(|| {
+            let host = sb_demo_new(WIDTH, HEIGHT, 1.0);
+            let bytes = [0x80u8, 0];
+            // SAFETY: `host` is live; `bytes` is a NUL-terminated invalid UTF-8 string.
+            unsafe {
+                assert!(!sb_host_key_pressed(host, bytes.as_ptr().cast::<c_char>()));
+                assert!(!sb_last_error().is_null());
+                sb_host_free(host);
+            }
+        });
+    }
+
+    #[test]
+    fn another_thread_is_refused() {
+        run_on_test_ui_thread(|| {
+            let host = sb_demo_new(WIDTH, HEIGHT, 1.0);
+            let addr = host as usize;
+            let ok = std::thread::spawn(move || {
+                // SAFETY: the pointer is not freed until this thread joins; we only
+                // prove the other thread is refused, we do not touch the object.
+                unsafe { sb_host_pointer_moved(addr as *const SbHost, 0.0, 0.0) }
+            })
+            .join()
+            .unwrap_or(true);
+            assert!(!ok);
+            // SAFETY: `host` is live and this is the owning thread.
+            unsafe { sb_host_free(host) };
+        });
     }
 }

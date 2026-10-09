@@ -48,6 +48,12 @@ struct HostE2E {
         #expect(view.host?.pixelWidth == Int((320 * (window.backingScaleFactor)).rounded()))
     }
 
+    @Test func keyRepeatDoesNotThrow() throws {
+        let host = try SlintHost(pixelWidth: 320, pixelHeight: 200, scale: 1)
+        _ = try host.renderIfNeeded()
+        host.keyRepeated("a")
+    }
+
     private func click(_ host: SlintHost, _ point: CGPoint) {
         host.pointerMoved(x: point.x, y: point.y)
         host.pointerPressed(x: point.x, y: point.y, button: .left)

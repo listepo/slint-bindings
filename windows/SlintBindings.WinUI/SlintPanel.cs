@@ -17,10 +17,16 @@ namespace SlintBindings.WinUI;
 
 public sealed class SlintPanel : UserControl
 {
+    /// <summary>WinUI wheel units are multiples of 120; Slint wants logical points.</summary>
+    private const float WheelDeltaToPoints = 40f / 120f;
+
     private readonly Image _image = new() { Stretch = Stretch.Fill };
     private WriteableBitmap? _bitmap;
+    private byte[] _bgra = [];
+    private XamlRoot? _xamlRoot;
 
     public SlintHost? Host { get; private set; }
+    public string? LastError { get; private set; }
 
     public SlintPanel()
     {
@@ -30,59 +36,144 @@ public sealed class SlintPanel : UserControl
         Unloaded += OnUnloaded;
         SizeChanged += (_, _) => SyncSize();
         PointerMoved += (_, e) => Forward(e, (x, y, _) => Host?.PointerMoved(x, y));
-        PointerPressed += (_, e) => { Focus(FocusState.Pointer); Forward(e, (x, y, b) => Host?.PointerPressed(x, y, b)); };
-        PointerReleased += (_, e) => Forward(e, (x, y, b) => Host?.PointerReleased(x, y, b));
-        PointerExited += (_, _) => Host?.PointerExited();
-        PointerWheelChanged += (_, e) =>
+        PointerPressed += (_, e) =>
         {
-            var p = e.GetCurrentPoint(this);
-            Host?.PointerScrolled((float)p.Position.X, (float)p.Position.Y, 0, p.Properties.MouseWheelDelta);
+            Focus(FocusState.Pointer);
+            CapturePointer(e.Pointer);
+            Forward(e, (x, y, b) => Host?.PointerPressed(x, y, b));
         };
+        PointerReleased += (_, e) =>
+        {
+            Forward(e, (x, y, b) => Host?.PointerReleased(x, y, b));
+            ReleasePointerCapture(e.Pointer);
+        };
+        PointerCanceled += (_, e) =>
+        {
+            Host?.PointerExited();
+            ReleasePointerCapture(e.Pointer);
+        };
+        PointerExited += (_, _) => Host?.PointerExited();
+        PointerWheelChanged += OnWheel;
         GotFocus += (_, _) => Host?.FocusChanged(true);
         LostFocus += (_, _) => Host?.FocusChanged(false);
-        // TODO(M2): map VirtualKey to Slint key text (arrows U+F700…, Backspace U+0008) and
-        // route CharacterReceived for typed text; IME needs CoreTextEditContext.
-        CharacterReceived += (_, e) => Host?.KeyPressed(e.Character.ToString());
+        PreviewKeyDown += OnPreviewKeyDown;
+        KeyUp += OnKeyUp;
+        CharacterReceived += OnCharacterReceived;
     }
 
     private float Scale => (float)(XamlRoot?.RasterizationScale ?? 1.0);
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        Host ??= new SlintHost(1, 1, Scale);
+        try
+        {
+            Host ??= new SlintHost(1, 1, Scale);
+        }
+        catch (SlintException ex)
+        {
+            LastError = ex.Message;
+            return;
+        }
+        _xamlRoot = XamlRoot;
+        if (_xamlRoot is not null)
+            _xamlRoot.Changed += OnXamlRootChanged;
         SyncSize();
-        // Fires once per composition frame on the UI thread: tick timers, then render if dirty.
         CompositionTarget.Rendering += OnRendering;
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
+        if (_xamlRoot is not null)
+            _xamlRoot.Changed -= OnXamlRootChanged;
+        _xamlRoot = null;
         CompositionTarget.Rendering -= OnRendering;
         Host?.Dispose();
         Host = null;
     }
+
+    private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args) => SyncSize();
 
     private void SyncSize()
     {
         if (Host is null) return;
         var w = Math.Max(1, (int)Math.Round(ActualWidth * Scale));
         var h = Math.Max(1, (int)Math.Round(ActualHeight * Scale));
-        Host.Resize(w, h, Scale);
-        _bitmap = new WriteableBitmap(w, h);
-        _image.Source = _bitmap;
+        try
+        {
+            Host.Resize(w, h, Scale);
+            if (_bitmap is null || _bitmap.PixelWidth != w || _bitmap.PixelHeight != h)
+            {
+                _bitmap = new WriteableBitmap(w, h);
+                _image.Source = _bitmap;
+            }
+            RenderFrame();
+        }
+        catch (SlintException ex)
+        {
+            LastError = ex.Message;
+        }
     }
 
     private void OnRendering(object? sender, object e)
     {
         SlintHost.Tick();
+        RenderFrame();
+    }
+
+    private void RenderFrame()
+    {
         if (Host is null || _bitmap is null) return;
-        using var stream = _bitmap.PixelBuffer.AsStream();
-        var bgra = new byte[_bitmap.PixelWidth * _bitmap.PixelHeight * 4];
-        if (Host.RenderBgra(bgra, out _))
+        try
         {
-            stream.Write(bgra, 0, bgra.Length);
-            _bitmap.Invalidate();
+            using var stream = _bitmap.PixelBuffer.AsStream();
+            var needed = _bitmap.PixelWidth * _bitmap.PixelHeight * 4;
+            if (_bgra.Length != needed) _bgra = new byte[needed];
+            if (Host.RenderBgra(_bgra, out _))
+            {
+                stream.Write(_bgra, 0, _bgra.Length);
+                _bitmap.Invalidate();
+            }
         }
+        catch (SlintException ex)
+        {
+            LastError = ex.Message;
+        }
+    }
+
+    private void OnWheel(object sender, PointerRoutedEventArgs e)
+    {
+        var p = e.GetCurrentPoint(this);
+        var delta = p.Properties.MouseWheelDelta * WheelDeltaToPoints;
+        var dx = p.Properties.IsHorizontalMouseWheel ? delta : 0;
+        var dy = p.Properties.IsHorizontalMouseWheel ? 0 : delta;
+        Host?.PointerScrolled((float)p.Position.X, (float)p.Position.Y, dx, dy);
+        e.Handled = true;
+    }
+
+    private void OnPreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        var text = SlintKeys.Special(e.Key);
+        if (text is null) return;
+        if (e.KeyStatus.WasKeyDown) Host?.KeyRepeated(text);
+        else Host?.KeyPressed(text);
+        e.Handled = true;
+    }
+
+    private void OnKeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        var text = SlintKeys.Special(e.Key);
+        if (text is null) return;
+        Host?.KeyReleased(text);
+        e.Handled = true;
+    }
+
+    private void OnCharacterReceived(object sender, CharacterReceivedRoutedEventArgs e)
+    {
+        if (char.IsControl(e.Character) && e.Character is not ' ') return;
+        var text = e.Character.ToString();
+        Host?.KeyPressed(text);
+        Host?.KeyReleased(text);
+        e.Handled = true;
     }
 
     // Positions arrive in DIPs (logical pixels) relative to this control, which is what Slint expects.

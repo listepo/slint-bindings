@@ -126,20 +126,20 @@ void sb_tick(void);
 bool sb_host_pointer_moved(const struct SbHost *host, float x, float y);
 
 /**
- * Pointer button pressed, in logical points.
+ * Pointer button pressed, in logical points. `button` is 0 left, 1 right, 2 middle.
  *
  * # Safety
  * `host` must be null or live.
  */
-bool sb_host_pointer_pressed(const struct SbHost *host, float x, float y, SbPointerButton button);
+bool sb_host_pointer_pressed(const struct SbHost *host, float x, float y, uint8_t button);
 
 /**
- * Pointer button released, in logical points.
+ * Pointer button released, in logical points. `button` is 0 left, 1 right, 2 middle.
  *
  * # Safety
  * `host` must be null or live.
  */
-bool sb_host_pointer_released(const struct SbHost *host, float x, float y, SbPointerButton button);
+bool sb_host_pointer_released(const struct SbHost *host, float x, float y, uint8_t button);
 
 /**
  * Pointer left the view.
@@ -180,6 +180,14 @@ bool sb_host_key_pressed(const struct SbHost *host, const char *text);
  * `host` must be null or live; `text` null or NUL-terminated.
  */
 bool sb_host_key_released(const struct SbHost *host, const char *text);
+
+/**
+ * A held key auto-repeated; `text` is UTF-8 (the typed character or a Slint key code).
+ *
+ * # Safety
+ * `host` must be null or live; `text` null or NUL-terminated.
+ */
+bool sb_host_key_repeated(const struct SbHost *host, const char *text);
 
 /**
  * Sets the demo form's `name` property.

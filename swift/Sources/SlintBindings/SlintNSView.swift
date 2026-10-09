@@ -101,7 +101,7 @@ public final class SlintNSView: NSView {
         if let trackingArea { removeTrackingArea(trackingArea) }
         let area = NSTrackingArea(
             rect: .zero,
-            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self
         )
         addTrackingArea(area)
@@ -119,6 +119,7 @@ public final class SlintNSView: NSView {
 
     public override func mouseDragged(with event: NSEvent) { mouseMoved(with: event) }
     public override func rightMouseDragged(with event: NSEvent) { mouseMoved(with: event) }
+    public override func otherMouseDragged(with event: NSEvent) { mouseMoved(with: event) }
 
     public override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
@@ -137,7 +138,13 @@ public final class SlintNSView: NSView {
 
     public override func scrollWheel(with event: NSEvent) {
         let p = point(event)
-        host?.pointerScrolled(x: p.x, y: p.y, dx: event.scrollingDeltaX, dy: event.scrollingDeltaY)
+        // Precise devices report points. A mouse wheel reports lines; Slint wants points.
+        let unit: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 16
+        host?.pointerScrolled(
+            x: p.x, y: p.y,
+            dx: event.scrollingDeltaX * unit,
+            dy: event.scrollingDeltaY * unit
+        )
     }
 
     private func press(_ event: NSEvent, _ button: SlintPointerButton) {
@@ -156,7 +163,11 @@ public final class SlintNSView: NSView {
 
     public override func keyDown(with event: NSEvent) {
         guard let text = SlintKeys.text(for: event) else { return super.keyDown(with: event) }
-        host?.keyPressed(text)
+        if event.isARepeat {
+            host?.keyRepeated(text)
+        } else {
+            host?.keyPressed(text)
+        }
     }
 
     public override func keyUp(with event: NSEvent) {
@@ -172,6 +183,10 @@ public final class SlintNSView: NSView {
     public override func resignFirstResponder() -> Bool {
         host?.focusChanged(false)
         return true
+    }
+
+    isolated deinit {
+        displayLink?.invalidate()
     }
 }
 
