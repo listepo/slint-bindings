@@ -81,6 +81,42 @@ const char *sb_last_error(void);
 struct SbHost *sb_demo_new(uint32_t width, uint32_t height, float scale);
 
 /**
+ * Creates the demo on a `CAMetalLayer` (`layer`). Null on failure, including
+ * on every OS other than macOS and when the GPU adapter cannot be opened.
+ * The caller then uses [`sb_demo_new`].
+ *
+ * # Safety
+ * `layer` is null or a live `CAMetalLayer` that outlives the returned host.
+ */
+struct SbHost *sb_demo_new_metal(void *layer, uint32_t width, uint32_t height, float scale);
+
+/**
+ * Creates the demo on an `ISwapChainPanel` (`panel`). Null on failure,
+ * including on every OS other than Windows. The caller then uses [`sb_demo_new`].
+ *
+ * # Safety
+ * `panel` is null or a live `ISwapChainPanel` that outlives the returned host.
+ */
+struct SbHost *sb_demo_new_swapchain(void *panel, uint32_t width, uint32_t height, float scale);
+
+/**
+ * 1 when `host` presents on the GPU.
+ *
+ * # Safety
+ * `host` must be null or live.
+ */
+bool sb_host_is_gpu(const struct SbHost *host);
+
+/**
+ * Presents one frame into the surface passed to `sb_demo_new_metal` or
+ * `sb_demo_new_swapchain`. `failed` is 1 on a CPU host or a lost swapchain.
+ *
+ * # Safety
+ * `host` must be null or live.
+ */
+struct SbFrame sb_host_gpu_render(struct SbHost *host);
+
+/**
  * Destroys a host. Null is ignored.
  *
  * # Safety

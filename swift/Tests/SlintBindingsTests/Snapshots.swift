@@ -10,7 +10,9 @@ import Testing
 @MainActor
 struct Snapshots {
     @Test func signInViewScreenshotMatchesTheSnapshot() throws {
-        let view = SlintNSView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+        // The golden is the CPU frame. The default view presents on Metal, which
+        // does not put a CGImage in `layer.contents`.
+        let view = SlintNSView(frame: NSRect(x: 0, y: 0, width: 320, height: 200), prefersGpu: false)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
             styleMask: [.borderless],

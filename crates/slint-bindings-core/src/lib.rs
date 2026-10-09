@@ -3,16 +3,20 @@
 //! A native host (an `NSView`, a WinUI panel) owns the run loop, the surface
 //! and the input. This crate installs a Slint platform with no event loop of
 //! its own: the host resizes, forwards input, ticks timers and asks for a
-//! frame whenever it wants one. M1 renders on the CPU into a buffer the host
-//! owns; the GPU milestone swaps the renderer, not this API.
+//! frame whenever it wants one. The CPU path paints into a buffer the host
+//! owns. On macOS and Windows, FemtoVG can paint into a host surface instead.
 
 mod demo;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod gpu;
 mod host;
 mod ime;
 mod keys;
 mod platform;
 
 pub use demo::DemoForm;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub use gpu::GpuHost;
 pub use host::{EmbeddedHost, Frame, PointerButton};
 pub use keys::{
     AppKitKey, MOD_COMMAND, MOD_CONTROL, MOD_OPTION, MOD_SHIFT, VirtualKeyEvent, appkit_key_text,
@@ -66,4 +70,10 @@ pub enum Error {
     /// The host passed a null pointer or another value this API rejects.
     #[error("{0}")]
     InvalidArgument(&'static str),
+    /// The GPU device or the host surface could not be created.
+    ///
+    /// Callers fall back to the CPU renderer. The text is the wgpu or Slint
+    /// error, which is not a fixed set.
+    #[error("gpu: {0}")]
+    Gpu(String),
 }

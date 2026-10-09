@@ -87,3 +87,22 @@ longer swizzles. `just windows-dll` (and the ARM64 triple) produces the DLL.
 `windows/Directory.Build.targets` copies it beside the app and under
 `runtimes/<rid>/native`. `just pinvoke-check` fails if `NativeMethods.cs` and
 the header disagree on `sb_*` names. Marshalling stays hand-written.
+
+### T7. GPU path on macOS (M3)
+
+FemtoVG renders on wgpu's Metal backend into a `CAMetalLayer` sublayer of
+`SlintNSView`. The view's own layer is not replaced. `sb_demo_new_metal` builds
+the host; `sb_host_gpu_render` presents. Live resize sets
+`presentsWithTransaction` on the layer. If the adapter or the surface fails,
+the view drops the layer and uses the CPU `CGImage` path. CPU and GPU hosts
+share `slint-embed`'s platform: `set_next_window` stages the GPU adapter for
+one component. The feature is off on Linux. The 4K frame-time checkpoint was
+not measured.
+
+### T8. GPU path on Windows (M3)
+
+The same renderer presents into a `SwapChainPanel`. The panel passes
+`ISwapChainPanelNative` to `sb_demo_new_swapchain`; wgpu creates the DXGI swap
+chain and calls `SetSwapChain` on the UI thread. `CompositionScaleChanged`
+resizes it. A failed COM query or adapter keeps the `WriteableBitmap` path.
+The window was not launched, and the frame-time checkpoint was not measured.

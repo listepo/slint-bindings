@@ -23,11 +23,12 @@ dotnet build windows/SlintDemo.WinUI -p:Platform=x64
 
 ## Шлях малювання
 
-- **M1 (тут):** кадри CPU → `WriteableBitmap` → `Image`. Просто, без проблем airspace,
-  повільно на великих видах.
-- **M3:** `SwapChainPanel`. Rust створює ланцюжок DXGI на GPU (wgpu
-  `SurfaceTargetUnsafe::SwapChainPanel` або Skia на D3D12, як `slint-skia-ffi`
-  у slint_dart) і викликає `ISwapChainPanelNative::SetSwapChain` в UI-потоці.
+- **GPU:** `SwapChainPanel`. Rust створює ланцюжок DXGI (wgpu
+  `SurfaceTargetUnsafe::SwapChainPanel`, FemtoVG) і викликає
+  `ISwapChainPanelNative::SetSwapChain` в UI-потоці. `CompositionScaleChanged`
+  змінює розмір.
+- **Запасний CPU:** кадри → `WriteableBitmap` → `Image`, якщо вказівник панелі
+  або адаптер D3D12 недоступний.
 - **Не планується:** дочірній `HWND`. У WinUI 3 немає підтримуваного елемента для нього,
   а композиція малює XAML поверх дочірніх вікон.
 
@@ -42,5 +43,6 @@ dotnet build windows/SlintDemo.WinUI -p:Platform=x64
       немає CoreWindow, виклик падає, і текст як і раніше вставляє `CharacterReceived`.
 - [x] BGRA з ядра (`sb_host_render_bgra`).
 - [x] Копіювання DLL на кожен RID (`runtimes/win-x64/native`, `runtimes/win-arm64/native`).
-- [ ] Шлях GPU через `SwapChainPanel` (M3).
+- [x] Шлях GPU через `SwapChainPanel` (M3); бітмап CPU, якщо він не стартує.
+      Час кадру не вимірювався.
 - [ ] Пакунок NuGet і MSIX для демо (M6). Каталоги RID — це розкладка, яку забере пакування.

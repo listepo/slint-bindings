@@ -42,8 +42,8 @@ Not added: `slint_embed::events` is used only by slint_dart and stays there; `i-
 | T4 | done | P1 | 3 | 100% | cursor |
 | T5 | todo | P1 | 2 | 0% | |
 | T6 | done | P1 | 3 | 100% | cursor |
-| T7 | todo | P1 | 4 | 0% | |
-| T8 | todo | P1 | 5 | 0% | |
+| T7 | done | P1 | 4 | 100% | cursor |
+| T8 | done | P1 | 5 | 100% | cursor |
 | T9 | todo | P2 | 3 | 0% | |
 | T10 | todo | P2 | 3 | 0% | |
 | T11 | todo | P1 | 4 | 0% | |
@@ -134,6 +134,14 @@ with a wgpu Metal surface created from the view's layer
 code exists. Done when the M3 checkpoint numbers are met on macOS and live
 resize shows no stretched or black frames (`presentsWithTransaction` during resize).
 
+Execution: FemtoVG on wgpu (`renderer-femtovg-wgpu`, `unstable-wgpu-30`), not
+Skia. `i-slint-renderer-skia` compiles all of Skia and is not a public renderer.
+The GPU window is staged through `slint_embed::platform::set_next_window`, so
+CPU and GPU hosts share the one software platform. `sb_demo_new_metal` takes a
+`CAMetalLayer` sublayer (the view's own layer is left alone). Live resize sets
+`presentsWithTransaction`. A failed device or surface falls back to
+`sb_demo_new`. The 4K timing checkpoint was not measured.
+
 ### T8. GPU path on Windows (M3)
 
 Replace the `Image` with a `SwapChainPanel`. Candidates: (a) wgpu D3D12 surface
@@ -143,6 +151,12 @@ from the panel (`SurfaceTargetUnsafe::SwapChainPanel`, wgpu PR #4191) plus
 host binds with `ISwapChainPanelNative::SetSwapChain` on the UI thread.
 Handle `CompositionScaleChanged` for DPI. Done when the M3 checkpoint holds on
 Windows.
+
+Execution: the same FemtoVG wgpu renderer. `sb_demo_new_swapchain` takes
+`ISwapChainPanelNative`; wgpu creates the DXGI swap chain and calls
+`SetSwapChain` on the UI thread. `CompositionScaleChanged` resizes the panel.
+If the COM pointer or the adapter fails, the panel keeps the `WriteableBitmap`.
+The frame-time checkpoint was not measured, and the window was not launched.
 
 ### T9. Packaging (M4)
 

@@ -44,7 +44,8 @@ struct HostE2E {
         window.contentView = view
         view.frame = NSRect(x: 0, y: 0, width: 320, height: 200)
         #expect(view.lastError == nil)
-        #expect(view.layer?.contents != nil)
+        let presentedOnGpu = view.host?.rendersOnGpu == true && view.layer?.sublayers?.isEmpty == false
+        #expect(view.layer?.contents != nil || presentedOnGpu)
         #expect(view.host?.pixelWidth == Int((320 * (window.backingScaleFactor)).rounded()))
     }
 

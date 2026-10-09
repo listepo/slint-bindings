@@ -28,7 +28,8 @@ private final class SubmittedBox {
     init(_ handler: @escaping @MainActor (String) -> Void) { self.handler = handler }
 }
 
-/// The demo form, rendered on the CPU into a buffer this object owns.
+/// The demo form. CPU frames land in a buffer this object owns; a Metal host
+/// presents into the `CAMetalLayer` passed at init.
 @MainActor
 public final class SlintHost {
     private let handle: OpaquePointer
@@ -36,8 +37,9 @@ public final class SlintHost {
     private var submitted: Unmanaged<SubmittedBox>?
     public private(set) var pixelWidth = 1
     public private(set) var pixelHeight = 1
+    public let rendersOnGpu: Bool
 
-    /// Creates the component at `width`×`height` physical pixels.
+    /// Creates the component at `width`×`height` physical pixels, on the CPU.
     public init(pixelWidth: Int, pixelHeight: Int, scale: CGFloat) throws {
         guard let handle = sb_demo_new(UInt32(max(pixelWidth, 1)), UInt32(max(pixelHeight, 1)), Float(scale)) else {
             throw SlintError.last()
@@ -45,6 +47,24 @@ public final class SlintHost {
         self.handle = handle
         self.pixelWidth = max(pixelWidth, 1)
         self.pixelHeight = max(pixelHeight, 1)
+        self.rendersOnGpu = false
+    }
+
+    /// Creates the component presenting into `metalLayer` (`CAMetalLayer`).
+    /// The layer must stay alive until this host is released.
+    public init(metalLayer: UnsafeMutableRawPointer, pixelWidth: Int, pixelHeight: Int, scale: CGFloat) throws {
+        guard let handle = sb_demo_new_metal(
+            metalLayer,
+            UInt32(max(pixelWidth, 1)),
+            UInt32(max(pixelHeight, 1)),
+            Float(scale)
+        ) else {
+            throw SlintError.last()
+        }
+        self.handle = handle
+        self.pixelWidth = max(pixelWidth, 1)
+        self.pixelHeight = max(pixelHeight, 1)
+        self.rendersOnGpu = sb_host_is_gpu(handle)
     }
 
     isolated deinit {
@@ -76,6 +96,14 @@ public final class SlintHost {
         if frame.failed != 0 { throw SlintError.last() }
         guard frame.redrawn != 0 else { return (nil, frame.animating != 0) }
         return (makeImage(), frame.animating != 0)
+    }
+
+    /// Presents one GPU frame into the layer passed at init.
+    @discardableResult
+    public func renderGpu() throws -> (redrawn: Bool, animating: Bool) {
+        let frame = sb_host_gpu_render(handle)
+        if frame.failed != 0 { throw SlintError.last() }
+        return (frame.redrawn != 0, frame.animating != 0)
     }
 
     private func makeImage() -> CGImage? {

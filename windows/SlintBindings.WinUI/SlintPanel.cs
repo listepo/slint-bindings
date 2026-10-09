@@ -1,10 +1,10 @@
 // WinUI 3 control presenting a SlintHost.
-// M1 (this file): CPU frames copied into a WriteableBitmap shown by an Image.
-// M3: replace the Image with a SwapChainPanel and let Rust render on the GPU into
-// a DXGI swap chain (wgpu's SurfaceTargetUnsafe::SwapChainPanel or Skia on D3D12).
-// SetSwapChain must be called on this control's UI thread.
+// The GPU path presents into a SwapChainPanel (wgpu creates the DXGI swap chain
+// and calls ISwapChainPanelNative::SetSwapChain on this UI thread). When that
+// surface cannot be created, frames are copied into a WriteableBitmap.
 
 using System;
+using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
@@ -23,6 +23,7 @@ public sealed class SlintPanel : UserControl
     private const float WheelDeltaToPoints = 40f / 120f;
 
     private readonly Image _image = new() { Stretch = Stretch.Fill };
+    private readonly SwapChainPanel _swapChain = new();
     private readonly SlintTextInput _textInput;
     private WriteableBitmap? _bitmap;
     private byte[] _bgra = [];
@@ -34,7 +35,12 @@ public sealed class SlintPanel : UserControl
     public SlintPanel()
     {
         _textInput = new SlintTextInput(() => Host, () => SlintTextInput.ScreenCaret(this));
-        Content = _image;
+        var root = new Grid();
+        _swapChain.Visibility = Visibility.Collapsed;
+        _swapChain.CompositionScaleChanged += (_, _) => SyncSize();
+        root.Children.Add(_image);
+        root.Children.Add(_swapChain);
+        Content = root;
         IsTabStop = true;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -79,7 +85,7 @@ public sealed class SlintPanel : UserControl
     {
         try
         {
-            Host ??= new SlintHost(1, 1, PixelScale);
+            Host ??= OpenHost();
         }
         catch (SlintException ex)
         {
@@ -115,6 +121,11 @@ public sealed class SlintPanel : UserControl
         try
         {
             Host.Resize(w, h, PixelScale);
+            if (Host.IsGpu)
+            {
+                RenderFrame();
+                return;
+            }
             if (_bitmap is null || _bitmap.PixelWidth != w || _bitmap.PixelHeight != h)
             {
                 _bitmap = new WriteableBitmap(w, h);
@@ -134,9 +145,50 @@ public sealed class SlintPanel : UserControl
         RenderFrame();
     }
 
+    private SlintHost OpenHost()
+    {
+        IntPtr native = 0;
+        try
+        {
+            native = Marshal.GetComInterfaceForObject<SwapChainPanel, ISwapChainPanelNative>(_swapChain);
+            var host = new SlintHost(1, 1, PixelScale, native);
+            if (host.IsGpu)
+            {
+                _image.Visibility = Visibility.Collapsed;
+                _swapChain.Visibility = Visibility.Visible;
+                return host;
+            }
+            host.Dispose();
+        }
+        catch (Exception ex)
+        {
+            LastError = ex.Message;
+        }
+        finally
+        {
+            if (native != 0) Marshal.Release(native);
+        }
+        _swapChain.Visibility = Visibility.Collapsed;
+        _image.Visibility = Visibility.Visible;
+        return new SlintHost(1, 1, PixelScale);
+    }
+
     private void RenderFrame()
     {
-        if (Host is null || _bitmap is null) return;
+        if (Host is null) return;
+        if (Host.IsGpu)
+        {
+            try
+            {
+                Host.RenderGpu(out _);
+            }
+            catch (SlintException ex)
+            {
+                LastError = ex.Message;
+            }
+            return;
+        }
+        if (_bitmap is null) return;
         try
         {
             using var stream = _bitmap.PixelBuffer.AsStream();
@@ -264,4 +316,13 @@ public sealed class SlintPanel : UserControl
         send((float)p.Position.X, (float)p.Position.Y, button);
         e.Handled = true;
     }
+}
+
+/// WinUI 3's swap-chain panel, as the COM interface wgpu's DX12 backend takes.
+[ComImport]
+[Guid("63aad0b8-7c24-40ff-85a8-640d944cc325")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ISwapChainPanelNative
+{
+    void SetSwapChain(IntPtr swapChain);
 }
