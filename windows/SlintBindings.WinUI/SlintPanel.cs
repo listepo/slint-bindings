@@ -73,13 +73,13 @@ public sealed class SlintPanel : UserControl
         CharacterReceived += OnCharacterReceived;
     }
 
-    private float Scale => (float)(XamlRoot?.RasterizationScale ?? 1.0);
+    private float PixelScale => (float)(XamlRoot?.RasterizationScale ?? 1.0);
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         try
         {
-            Host ??= new SlintHost(1, 1, Scale);
+            Host ??= new SlintHost(1, 1, PixelScale);
         }
         catch (SlintException ex)
         {
@@ -110,11 +110,11 @@ public sealed class SlintPanel : UserControl
     private void SyncSize()
     {
         if (Host is null) return;
-        var w = Math.Max(1, (int)Math.Round(ActualWidth * Scale));
-        var h = Math.Max(1, (int)Math.Round(ActualHeight * Scale));
+        var w = Math.Max(1, (int)Math.Round(ActualWidth * PixelScale));
+        var h = Math.Max(1, (int)Math.Round(ActualHeight * PixelScale));
         try
         {
-            Host.Resize(w, h, Scale);
+            Host.Resize(w, h, PixelScale);
             if (_bitmap is null || _bitmap.PixelWidth != w || _bitmap.PixelHeight != h)
             {
                 _bitmap = new WriteableBitmap(w, h);

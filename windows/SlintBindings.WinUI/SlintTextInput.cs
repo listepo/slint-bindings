@@ -16,7 +16,7 @@ using Windows.UI.Text.Core;
 
 namespace SlintBindings.WinUI;
 
-internal sealed class SlintTextInput
+internal sealed partial class SlintTextInput
 {
     private readonly Func<SlintHost?> _host;
     private readonly Func<Rect> _caretRect;
