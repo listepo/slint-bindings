@@ -3,6 +3,7 @@
 // CAMetalLayer the GPU renderer draws into; the input half stays.
 
 import AppKit
+import CSlintBindings
 import QuartzCore
 
 @MainActor
