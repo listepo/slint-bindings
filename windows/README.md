@@ -23,11 +23,12 @@ are staged when both DLLs have been built.
 
 ## Rendering path
 
-- **M1 (here):** CPU frames → `WriteableBitmap` → `Image`. Simple, no airspace
-  issues, slow for large views.
-- **M3:** `SwapChainPanel`. Rust creates the DXGI swap chain on the GPU (wgpu
-  `SurfaceTargetUnsafe::SwapChainPanel`, or Skia on D3D12 like slint_dart's
-  `slint-skia-ffi`) and calls `ISwapChainPanelNative::SetSwapChain` on the UI thread.
+- **GPU:** `SwapChainPanel`. Rust creates the DXGI swap chain (wgpu
+  `SurfaceTargetUnsafe::SwapChainPanel`, FemtoVG) and calls
+  `ISwapChainPanelNative::SetSwapChain` on the UI thread. `CompositionScaleChanged`
+  resizes it.
+- **CPU fallback:** frames → `WriteableBitmap` → `Image`, used when the panel
+  pointer or the D3D12 adapter is not available.
 - **Not planned:** a child `HWND`. WinUI 3 has no supported control for hosting
   one, and composition draws XAML over child windows.
 
@@ -42,5 +43,6 @@ are staged when both DLLs have been built.
       has no CoreWindow, so that call fails and `CharacterReceived` still inserts text.
 - [x] BGRA output from the core (`sb_host_render_bgra`).
 - [x] Per-RID DLL copy (`runtimes/win-x64/native`, `runtimes/win-arm64/native`).
-- [ ] GPU path via `SwapChainPanel` (M3).
+- [x] GPU path via `SwapChainPanel` (M3), with the CPU bitmap when it cannot start.
+      The frame-time checkpoint has not been measured.
 - [ ] NuGet package and MSIX for the demo (M6). The RID folders are the layout that pack will use.

@@ -8,17 +8,17 @@
 У Slint нет официальной интеграции со Swift или WinUI (см. [research.md](../../research.md)).
 Поддерживаемый способ встраивания — своя платформа (`slint::platform`); на ней и построен проект.
 
-**Статус:** M2. Ядро рисует на CPU в буфер, которым владеет хост.
-macOS-хост собирается, а путь демо покрыт тестами без окна, включая клавиатуру
-и композицию IME. WinUI-хост собирается в CI: виртуальные клавиши, композиция IME
-(когда ОС даёт `CoreTextEditContext`) и нативная DLL на каждый RID.
-Окно WinUI здесь не запускалось.
+**Статус:** M3. macOS показывает кадр через `CAMetalLayer` (FemtoVG на Metal
+у wgpu), WinUI — через `SwapChainPanel` (тот же рендерер на D3D12). Если
+адаптер или поверхность не создаются, хост возвращается к CPU-буферу.
+Клавиатура, IME и DLL на каждый RID из M2 на месте. Порог M3 по времени кадра
+(4K быстрее 4 мс) здесь не измерялся, окно WinUI не запускалось.
 
 ## Состав
 
 | Путь | Что это |
 | --- | --- |
-| `crates/slint-bindings-core` | Платформа Slint, которой управляет хост: программный рендерер в RGBA-буфер вызывающего, ввод, таймеры. Здесь живёт демо-компонент. |
+| `crates/slint-bindings-core` | Платформа Slint, которой управляет хост: CPU-рендерер в RGBA-буфер вызывающего и FemtoVG на wgpu в поверхность хоста. Ввод, таймеры, демо-компонент. |
 | `crates/slint-bindings-ffi` | C ABI `sb_*` поверх ядра (статическая библиотека для Swift, DLL для WinUI). Только пересылает вызовы. |
 | `flutter/` | Копия [slint_dart](https://github.com/listepo/slint_dart). Крейт `slint-embed` (`flutter/packages/slint/rust/embed`) — общая программная платформа, карта событий Dart FFI и проверка UI-потока. |
 | `swift/` | Пакет SwiftPM: `CSlintBindings` (модуль C над сгенерированным заголовком), `SlintBindings` (`SlintHost`, `SlintNSView`, `SlintDemoView`), приложение `SlintDemo`. |
@@ -30,16 +30,21 @@ SwiftUI / AppKit ─┐                       ┌─ WinUI 3 (C#)
   SlintNSView     ├──▶ slint-bindings-ffi ◀┤   SlintHost (P/Invoke)
   SlintHost       │         │             │
                   │   slint-bindings-core │
-                  │   (slint-embed        │
-                  │    SoftwareRenderer)  │
+                  │   CPU-буфер или       │
+                  │   FemtoVG на wgpu     │
 ```
 
 ## Как получается кадр
 
 1. Хост следит за размером и масштабом и вызывает `sb_host_resize`.
 2. На каждом тике (`CADisplayLink` на macOS, `CompositionTarget.Rendering` в WinUI)
-   хост вызывает `sb_tick`, затем `sb_host_render`. Slint перерисовывает кадр только когда что-то изменилось.
-3. Хост показывает кадр (содержимое слоя `CGImage` на macOS — RGBA8;
+   хост вызывает `sb_tick`, затем `sb_host_gpu_render` или `sb_host_render`.
+   Slint перерисовывает кадр только когда что-то изменилось.
+3. GPU — это подслой `CAMetalLayer` на macOS (`sb_demo_new_metal`) или
+   `SwapChainPanel` в WinUI (`sb_demo_new_swapchain`). Цепочку создаёт wgpu.
+   Пока пользователь тянет край окна, у слоя Metal включён
+   `presentsWithTransaction`, и кадр не растягивается. Если конструктор не
+   удался, хост показывает CPU-кадр (содержимое слоя `CGImage` на macOS — RGBA8;
    `WriteableBitmap` в WinUI — BGRA8 из `sb_host_render_bgra`).
 4. Мышь, прокрутка, клавиатура и фокус возвращаются через `sb_host_*`
    в логических точках от левого верхнего угла.

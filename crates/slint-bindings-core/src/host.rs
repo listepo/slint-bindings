@@ -49,7 +49,7 @@ const _: () = {
     assert!(offset_of!(PremultipliedRgbaColor, alpha) == 3);
 };
 
-fn check_scale(scale: f32) -> Result<(), Error> {
+pub(crate) fn check_scale(scale: f32) -> Result<(), Error> {
     if scale.is_finite() && scale > 0.0 {
         Ok(())
     } else {
@@ -328,11 +328,14 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
     /// move focus out of the view.
     pub fn key_pressed(&self, text: &str) -> Result<bool, Error> {
         if text == "\t" || text == "\u{19}" {
-            return self.move_focus_inside(text == "\t");
+            return move_focus_inside(&self.window, text == "\t");
         }
-        self.dispatch(WindowEvent::KeyPressed {
-            text: SharedString::from(text),
-        })
+        dispatch_window(
+            &self.window,
+            WindowEvent::KeyPressed {
+                text: SharedString::from(text),
+            },
+        )
     }
 
     /// A key went up. A release the scene ignores is still a successful call.
@@ -452,50 +455,8 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
         self.send(WindowEvent::WindowActiveChanged(focused))
     }
 
-    /// Moves focus to the next or previous item inside the view.
-    ///
-    /// Slint's own Tab handling always reports the key as accepted, and it
-    /// wraps from the last item back to the first. A host that owns the rest
-    /// of the window needs the wrap (and a chain with nowhere to go) reported
-    /// as "not kept", with focus left on the item that had it.
-    fn move_focus_inside(&self, forward: bool) -> Result<bool, Error> {
-        let inner = i_slint_core::window::WindowInner::from_pub(self.window.window());
-        let before = inner.focus_item.borrow().upgrade();
-        let text = if forward { "\t" } else { "\u{19}" };
-        let _accepted = self.dispatch(WindowEvent::KeyPressed {
-            text: SharedString::from(text),
-        })?;
-        let after = inner.focus_item.borrow().upgrade();
-        let kept = match (&before, &after) {
-            (None, Some(_)) => true,
-            (Some(before), Some(after)) if before != after => {
-                let wrapped = if forward {
-                    focus_ordinal(after) <= focus_ordinal(before)
-                } else {
-                    focus_ordinal(after) >= focus_ordinal(before)
-                };
-                if wrapped {
-                    if forward {
-                        inner.focus_previous_item();
-                    } else {
-                        inner.focus_next_item();
-                    }
-                }
-                !wrapped
-            }
-            _ => false,
-        };
-        Ok(kept)
-    }
-
     fn send(&self, event: WindowEvent) -> Result<(), Error> {
-        let _accepted = self.dispatch(event)?;
-        Ok(())
-    }
-
-    /// `true` when the scene accepted the event.
-    fn dispatch(&self, event: WindowEvent) -> Result<bool, Error> {
-        Ok(self.window.dispatch_event_with_result(event)? == WindowEventDispatchResult::Accepted)
+        send_window(&self.window, event)
     }
 
     fn dispatch_composition(
@@ -505,23 +466,81 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
         preedit: &str,
         selection: Option<std::ops::Range<i32>>,
     ) -> Result<(), Error> {
-        // Composition is not a public `WindowEvent`. Slint's own backends
-        // deliver it through the same hidden internal event, which is what
-        // makes a preedit show up in a `TextInput` without being committed.
-        let mut key_event = i_slint_core::input::KeyEvent::default();
-        key_event.text = SharedString::from(text);
-        let event = i_slint_core::input::InternalKeyEvent {
-            key_event,
-            event_type,
-            preedit_text: SharedString::from(preedit),
-            preedit_selection: selection,
-            ..Default::default()
-        };
-        let _accepted = self
-            .window
-            .dispatch_event_with_result(WindowEvent::internal(event))?;
-        Ok(())
+        dispatch_composition_window(&self.window, event_type, text, preedit, selection)
     }
+}
+
+/// Delivers `event`. `true` when the scene accepted it.
+pub(crate) fn dispatch_window(window: &slint::Window, event: WindowEvent) -> Result<bool, Error> {
+    Ok(window.dispatch_event_with_result(event)? == WindowEventDispatchResult::Accepted)
+}
+
+/// Delivers `event` and ignores whether the scene accepted it.
+pub(crate) fn send_window(window: &slint::Window, event: WindowEvent) -> Result<(), Error> {
+    let _accepted = dispatch_window(window, event)?;
+    Ok(())
+}
+
+/// Moves focus to the next or previous item inside `window`.
+///
+/// Slint's own Tab handling always reports the key as accepted, and it
+/// wraps from the last item back to the first. A host that owns the rest
+/// of the window needs the wrap (and a chain with nowhere to go) reported
+/// as "not kept", with focus left on the item that had it.
+pub(crate) fn move_focus_inside(window: &slint::Window, forward: bool) -> Result<bool, Error> {
+    let inner = i_slint_core::window::WindowInner::from_pub(window);
+    let before = inner.focus_item.borrow().upgrade();
+    let text = if forward { "\t" } else { "\u{19}" };
+    let _accepted = dispatch_window(
+        window,
+        WindowEvent::KeyPressed {
+            text: SharedString::from(text),
+        },
+    )?;
+    let after = inner.focus_item.borrow().upgrade();
+    let kept = match (&before, &after) {
+        (None, Some(_)) => true,
+        (Some(before), Some(after)) if before != after => {
+            let wrapped = if forward {
+                focus_ordinal(after) <= focus_ordinal(before)
+            } else {
+                focus_ordinal(after) >= focus_ordinal(before)
+            };
+            if wrapped {
+                if forward {
+                    inner.focus_previous_item();
+                } else {
+                    inner.focus_next_item();
+                }
+            }
+            !wrapped
+        }
+        _ => false,
+    };
+    Ok(kept)
+}
+
+pub(crate) fn dispatch_composition_window(
+    window: &slint::Window,
+    event_type: i_slint_core::input::KeyEventType,
+    text: &str,
+    preedit: &str,
+    selection: Option<std::ops::Range<i32>>,
+) -> Result<(), Error> {
+    // Composition is not a public `WindowEvent`. Slint's own backends
+    // deliver it through the same hidden internal event, which is what
+    // makes a preedit show up in a `TextInput` without being committed.
+    let mut key_event = i_slint_core::input::KeyEvent::default();
+    key_event.text = SharedString::from(text);
+    let event = i_slint_core::input::InternalKeyEvent {
+        key_event,
+        event_type,
+        preedit_text: SharedString::from(preedit),
+        preedit_selection: selection,
+        ..Default::default()
+    };
+    let _accepted = dispatch_window(window, WindowEvent::internal(event))?;
+    Ok(())
 }
 
 /// Steps of `next_focus_item` from the component root until `item`.

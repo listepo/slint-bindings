@@ -14,6 +14,13 @@ slint-embed = { workspace = true }
 i-slint-core = { workspace = true }
 thiserror = { workspace = true }
 
+# FemtoVG's wgpu renderer is the public GPU API (Slint has no public Skia
+# renderer). It stays off the Linux build: Skia is a multi-gigabyte compile,
+# and this feature set is what actually pulls wgpu in.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+slint = { workspace = true, features = ["renderer-femtovg-wgpu", "unstable-wgpu-30"] }
+pollster = "0.4.0"
+
 [build-dependencies]
 slint-build = { workspace = true }
 

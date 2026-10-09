@@ -9,17 +9,18 @@ Slint has no official Swift or WinUI integration (see [research.md](research.md)
 Its supported embedding hook is a custom platform (`slint::platform`), which is
 what this project builds on.
 
-**Status:** M2. The core renders on the CPU into a buffer the host owns.
-The macOS host builds and the demo path is covered by headless end-to-end tests,
-including keyboard and IME composition. The WinUI host compiles in CI: virtual
-keys, IME composition (where the OS provides `CoreTextEditContext`), and a
-per-RID native DLL. The WinUI window itself has not been launched here.
+**Status:** M3. macOS presents through a `CAMetalLayer` (FemtoVG on wgpu's
+Metal backend) and WinUI through a `SwapChainPanel` (the same renderer on
+D3D12). Either host falls back to the CPU buffer when the GPU adapter or the
+surface cannot be created. Keyboard, IME and the per-RID DLL from M2 are
+unchanged. The M3 frame-time checkpoint (4K under 4 ms) has not been measured
+here, and the WinUI window itself has not been launched.
 
 ## Layout
 
 | Path | What it is |
 | --- | --- |
-| `crates/slint-bindings-core` | Host-driven Slint platform: software renderer into a caller-owned RGBA buffer, input forwarding, timers. Holds the demo component. |
+| `crates/slint-bindings-core` | Host-driven Slint platform: CPU renderer into a caller-owned RGBA buffer, and FemtoVG on wgpu into a host surface. Input forwarding, timers, the demo component. |
 | `crates/slint-bindings-ffi` | `sb_*` C ABI over the core (static library for Swift, DLL for WinUI). Forwards only. |
 | `flutter/` | Copy of [slint_dart](https://github.com/listepo/slint_dart). Its `slint-embed` crate (`flutter/packages/slint/rust/embed`) is the software platform, Dart event map and UI-thread guard shared with the core. |
 | `swift/` | SwiftPM package: `CSlintBindings` (C module over the generated header), `SlintBindings` (`SlintHost`, `SlintNSView`, `SlintDemoView`), `SlintDemo` app. |
@@ -31,17 +32,22 @@ SwiftUI / AppKit ─┐                       ┌─ WinUI 3 (C#)
   SlintNSView     ├──▶ slint-bindings-ffi ◀┤   SlintHost (P/Invoke)
   SlintHost       │         │             │
                   │   slint-bindings-core │
-                  │   (slint-embed        │
-                  │    SoftwareRenderer)  │
+                  │   CPU buffer, or      │
+                  │   FemtoVG on wgpu     │
 ```
 
 ## How a frame happens
 
 1. The host view tracks its size and backing scale and calls `sb_host_resize`.
 2. On every display-link tick (`CADisplayLink` on macOS,
-   `CompositionTarget.Rendering` on WinUI) the host calls `sb_tick` and then
-   `sb_host_render`. Slint repaints only when something changed.
-3. The host presents the frame (`CGImage` layer contents on macOS take RGBA8;
+   `CompositionTarget.Rendering` on WinUI) the host calls `sb_tick`, then
+   either `sb_host_gpu_render` or `sb_host_render`. Slint repaints only when
+   something changed.
+3. GPU presentation is a `CAMetalLayer` sublayer on macOS
+   (`sb_demo_new_metal`) or a WinUI `SwapChainPanel` (`sb_demo_new_swapchain`).
+   wgpu creates the swap chain. During a live resize the Metal layer sets
+   `presentsWithTransaction` so the frame is not stretched. If that constructor
+   fails, the host presents the CPU frame (`CGImage` layer contents take RGBA8;
    WinUI `WriteableBitmap` takes BGRA8 from `sb_host_render_bgra`).
 4. Mouse, scroll, keyboard and focus events go back through `sb_host_*` in
    logical points from the top-left corner.

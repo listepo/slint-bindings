@@ -1,6 +1,4 @@
 - T5. CI
-- T7. GPU path on macOS (M3)
-- T8. GPU path on Windows (M3)
 - T9. Packaging (M4)
 - T10. Multiple hosts and popups
 - T11. Runtime components (generic API)

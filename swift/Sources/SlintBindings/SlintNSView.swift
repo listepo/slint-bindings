@@ -1,6 +1,6 @@
 // AppKit view that presents a SlintHost's frames and feeds it input.
-// M1 path: CPU frames as CGImage layer contents. M3 swaps the layer for a
-// CAMetalLayer the GPU renderer draws into; the input half stays.
+// GPU path: a CAMetalLayer sublayer. The view's own layer stays, so a failed
+// Metal device can still present CPU frames as CGImage contents.
 
 import AppKit
 import CSlintBindings
@@ -8,6 +8,8 @@ import QuartzCore
 
 @MainActor
 public final class SlintNSView: NSView {
+    /// Declared before `host` so it is released after the Rust surface, which retains this layer.
+    private var metalLayer: CAMetalLayer?
     public private(set) var host: SlintHost?
     public private(set) var lastError: SlintError?
     private var displayLink: CADisplayLink?
@@ -28,12 +30,30 @@ public final class SlintNSView: NSView {
         // instead of stretching it across the view until the new pixels arrive.
         layer?.contentsGravity = .topLeft
         layer?.magnificationFilter = .nearest
+        let metal = CAMetalLayer()
+        metal.pixelFormat = .bgra8Unorm
+        metal.framebufferOnly = true
+        metal.isOpaque = false
+        metal.frame = bounds
+        layer?.addSublayer(metal)
+        metalLayer = metal
         do {
-            host = try SlintHost(pixelWidth: 1, pixelHeight: 1, scale: 1)
-        } catch let error as SlintError {
-            lastError = error
+            host = try SlintHost(
+                metalLayer: Unmanaged.passUnretained(metal).toOpaque(),
+                pixelWidth: 1,
+                pixelHeight: 1,
+                scale: 1
+            )
         } catch {
-            lastError = SlintError(description: "\(error)")
+            metal.removeFromSuperlayer()
+            metalLayer = nil
+            do {
+                host = try SlintHost(pixelWidth: 1, pixelHeight: 1, scale: 1)
+            } catch let error as SlintError {
+                lastError = error
+            } catch {
+                lastError = SlintError(description: "\(error)")
+            }
         }
     }
 
@@ -66,11 +86,29 @@ public final class SlintNSView: NSView {
         syncSize()
     }
 
+    public override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        // Present in the same transaction as the layer resize, so the frame is
+        // not stretched or black while the user drags the window edge.
+        metalLayer?.presentsWithTransaction = true
+    }
+
+    public override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        metalLayer?.presentsWithTransaction = false
+        present()
+    }
+
     private func syncSize() {
         let scale = window?.backingScaleFactor ?? 1
         layer?.contentsScale = scale
         let w = Int((bounds.width * scale).rounded())
         let h = Int((bounds.height * scale).rounded())
+        if let metalLayer {
+            metalLayer.contentsScale = scale
+            metalLayer.frame = bounds
+            metalLayer.drawableSize = CGSize(width: max(w, 1), height: max(h, 1))
+        }
         do {
             try host?.resize(pixelWidth: w, pixelHeight: h, scale: scale)
         } catch let error as SlintError {
@@ -93,7 +131,9 @@ public final class SlintNSView: NSView {
     private func present() {
         guard let host else { return }
         do {
-            if let image = try host.renderIfNeeded().image {
+            if host.rendersOnGpu {
+                _ = try host.renderGpu()
+            } else if let image = try host.renderIfNeeded().image {
                 layer?.contents = image
             }
         } catch let error as SlintError {

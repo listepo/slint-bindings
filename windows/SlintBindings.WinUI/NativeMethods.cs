@@ -24,6 +24,14 @@ internal static partial class NativeMethods
 
     [LibraryImport(Lib)] internal static partial IntPtr sb_last_error();
     [LibraryImport(Lib)] internal static partial IntPtr sb_demo_new(uint width, uint height, float scale);
+    [LibraryImport(Lib)] internal static partial IntPtr sb_demo_new_metal(IntPtr layer, uint width, uint height, float scale);
+    [LibraryImport(Lib)] internal static partial IntPtr sb_demo_new_swapchain(IntPtr panel, uint width, uint height, float scale);
+
+    [LibraryImport(Lib)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool sb_host_is_gpu(IntPtr host);
+
+    [LibraryImport(Lib)] internal static partial SbFrame sb_host_gpu_render(IntPtr host);
     [LibraryImport(Lib)] internal static partial void sb_host_free(IntPtr host);
     [LibraryImport(Lib)] internal static partial nuint sb_host_frame_len(IntPtr host);
 

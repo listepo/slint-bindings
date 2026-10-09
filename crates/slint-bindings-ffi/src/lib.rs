@@ -12,6 +12,8 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use slint_bindings_core::GpuHost;
 use slint_bindings_core::{
     AppKitKey, DemoForm, EmbeddedHost, Error, PointerButton, VirtualKeyEvent, appkit_key_text,
     virtual_key_command, virtual_key_text,
@@ -26,7 +28,123 @@ pub type SbSubmittedFn = Option<extern "C" fn(user_data: *mut c_void, name: *con
 
 /// Opaque handle to the demo form and its pixel buffer.
 pub struct SbHost {
-    host: EmbeddedHost<DemoForm>,
+    host: Backend,
+}
+
+enum Backend {
+    Cpu(EmbeddedHost<DemoForm>),
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    Gpu(GpuHost<DemoForm>),
+}
+
+macro_rules! forward {
+    ($self:ident.$method:ident($($arg:expr),*)) => {
+        match $self {
+            Backend::Cpu(host) => host.$method($($arg),*),
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            Backend::Gpu(host) => host.$method($($arg),*),
+        }
+    };
+}
+
+impl Backend {
+    fn frame_len(&self) -> usize {
+        forward!(self.frame_len())
+    }
+    fn resize(&mut self, width: u32, height: u32, scale: f32) -> Result<(), Error> {
+        forward!(self.resize(width, height, scale))
+    }
+    fn render(&mut self, out: &mut [u8]) -> Result<slint_bindings_core::Frame, Error> {
+        forward!(self.render(out))
+    }
+    fn render_bgra(&mut self, out: &mut [u8]) -> Result<slint_bindings_core::Frame, Error> {
+        forward!(self.render_bgra(out))
+    }
+    fn render_gpu(&self) -> Result<slint_bindings_core::Frame, Error> {
+        match self {
+            Backend::Cpu(_) => Err(Error::InvalidArgument(
+                "this host draws on the CPU; call sb_host_render",
+            )),
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            Backend::Gpu(host) => host.render_gpu(),
+        }
+    }
+    fn is_gpu(&self) -> bool {
+        match self {
+            Backend::Cpu(_) => false,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            Backend::Gpu(_) => true,
+        }
+    }
+    fn pointer_moved(&self, x: f32, y: f32) -> Result<(), Error> {
+        forward!(self.pointer_moved(x, y))
+    }
+    fn pointer_pressed(&self, x: f32, y: f32, button: PointerButton) -> Result<(), Error> {
+        forward!(self.pointer_pressed(x, y, button))
+    }
+    fn pointer_released(&self, x: f32, y: f32, button: PointerButton) -> Result<(), Error> {
+        forward!(self.pointer_released(x, y, button))
+    }
+    fn pointer_exited(&self) -> Result<(), Error> {
+        forward!(self.pointer_exited())
+    }
+    fn pointer_scrolled(&self, x: f32, y: f32, dx: f32, dy: f32) -> Result<(), Error> {
+        forward!(self.pointer_scrolled(x, y, dx, dy))
+    }
+    fn focus_changed(&self, focused: bool) -> Result<(), Error> {
+        forward!(self.focus_changed(focused))
+    }
+    fn key_pressed(&self, text: &str) -> Result<bool, Error> {
+        forward!(self.key_pressed(text))
+    }
+    fn key_released(&self, text: &str) -> Result<(), Error> {
+        forward!(self.key_released(text))
+    }
+    fn key_repeated(&self, text: &str) -> Result<(), Error> {
+        forward!(self.key_repeated(text))
+    }
+    fn update_composition(
+        &self,
+        preedit: &str,
+        utf16_start: i32,
+        utf16_end: i32,
+    ) -> Result<(), Error> {
+        forward!(self.update_composition(preedit, utf16_start, utf16_end))
+    }
+    fn commit_composition(&self, text: &str) -> Result<(), Error> {
+        forward!(self.commit_composition(text))
+    }
+    fn ime_started(&self) -> Result<(), Error> {
+        forward!(self.ime_started())
+    }
+    fn ime_composing(&self) -> bool {
+        forward!(self.ime_composing())
+    }
+    fn ime_document(&self) -> String {
+        forward!(self.ime_document())
+    }
+    fn ime_selection(&self) -> (i32, i32) {
+        forward!(self.ime_selection())
+    }
+    fn ime_replace(
+        &self,
+        range_start: i32,
+        range_end: i32,
+        text: &str,
+        sel_start: i32,
+        sel_end: i32,
+    ) -> Result<(), Error> {
+        forward!(self.ime_replace(range_start, range_end, text, sel_start, sel_end))
+    }
+    fn ime_select(&self, start: i32, end: i32) -> Result<(), Error> {
+        forward!(self.ime_select(start, end))
+    }
+    fn ime_completed(&self, canceled: bool) -> Result<(), Error> {
+        forward!(self.ime_completed(canceled))
+    }
+    fn component(&self) -> &DemoForm {
+        forward!(self.component())
+    }
 }
 
 /// Result of [`sb_host_render`].
@@ -135,8 +253,116 @@ pub extern "C" fn sb_last_error() -> *const c_char {
 pub extern "C" fn sb_demo_new(width: u32, height: u32, scale: f32) -> *mut SbHost {
     guard(ptr::null_mut(), || {
         let host = EmbeddedHost::new(DemoForm::new, width, height, scale)?;
-        Ok(Box::into_raw(Box::new(SbHost { host })))
+        Ok(Box::into_raw(Box::new(SbHost {
+            host: Backend::Cpu(host),
+        })))
     })
+}
+
+/// Creates the demo on a `CAMetalLayer` (`layer`). Null on failure, including
+/// on every OS other than macOS and when the GPU adapter cannot be opened.
+/// The caller then uses [`sb_demo_new`].
+///
+/// # Safety
+/// `layer` is null or a live `CAMetalLayer` that outlives the returned host.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_demo_new_metal(
+    layer: *mut c_void,
+    width: u32,
+    height: u32,
+    scale: f32,
+) -> *mut SbHost {
+    guard(ptr::null_mut(), || {
+        #[cfg(target_os = "macos")]
+        {
+            if layer.is_null() {
+                return Err(Error::InvalidArgument("the Metal layer is null"));
+            }
+            // SAFETY: the caller keeps the layer alive until `sb_host_free`.
+            let host = unsafe { GpuHost::new(DemoForm::new, layer, width, height, scale) }?;
+            Ok(Box::into_raw(Box::new(SbHost {
+                host: Backend::Gpu(host),
+            })))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (layer, width, height, scale);
+            Err(Error::Gpu(
+                "Metal rendering is only available on macOS".into(),
+            ))
+        }
+    })
+}
+
+/// Creates the demo on an `ISwapChainPanel` (`panel`). Null on failure,
+/// including on every OS other than Windows. The caller then uses [`sb_demo_new`].
+///
+/// # Safety
+/// `panel` is null or a live `ISwapChainPanel` that outlives the returned host.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_demo_new_swapchain(
+    panel: *mut c_void,
+    width: u32,
+    height: u32,
+    scale: f32,
+) -> *mut SbHost {
+    guard(ptr::null_mut(), || {
+        #[cfg(target_os = "windows")]
+        {
+            if panel.is_null() {
+                return Err(Error::InvalidArgument("the swap chain panel is null"));
+            }
+            // SAFETY: the caller keeps the panel alive until `sb_host_free`.
+            let host = unsafe { GpuHost::new(DemoForm::new, panel, width, height, scale) }?;
+            Ok(Box::into_raw(Box::new(SbHost {
+                host: Backend::Gpu(host),
+            })))
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (panel, width, height, scale);
+            Err(Error::Gpu(
+                "SwapChainPanel rendering is only available on Windows".into(),
+            ))
+        }
+    })
+}
+
+/// 1 when `host` presents on the GPU.
+///
+/// # Safety
+/// `host` must be null or live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_is_gpu(host: *const SbHost) -> bool {
+    // SAFETY: forwarded caller contract.
+    unsafe { host_ref(host) }.is_some_and(|h| h.host.is_gpu())
+}
+
+/// Presents one frame into the surface passed to `sb_demo_new_metal` or
+/// `sb_demo_new_swapchain`. `failed` is 1 on a CPU host or a lost swapchain.
+///
+/// # Safety
+/// `host` must be null or live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_gpu_render(host: *mut SbHost) -> SbFrame {
+    guard(
+        SbFrame {
+            failed: 1,
+            ..SbFrame::default()
+        },
+        || {
+            // SAFETY: forwarded caller contract; exclusive because the caller holds the only handle.
+            let Some(h) = (unsafe { host.as_mut() }) else {
+                return Err(Error::InvalidArgument("a null host was passed"));
+            };
+            let frame = h.host.render_gpu()?;
+            Ok(SbFrame {
+                redrawn: u8::from(frame.redrawn),
+                animating: u8::from(frame.animating),
+                failed: 0,
+            })
+        },
+    )
 }
 
 /// Destroys a host. Null is ignored.

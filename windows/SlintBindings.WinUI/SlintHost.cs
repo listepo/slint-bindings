@@ -16,13 +16,28 @@ public sealed class SlintHost : IDisposable
 
     public int PixelWidth { get; private set; } = 1;
     public int PixelHeight { get; private set; } = 1;
+    public bool IsGpu { get; }
 
     public event Action<string>? Submitted;
 
     public SlintHost(int pixelWidth, int pixelHeight, float scale)
+        : this(pixelWidth, pixelHeight, scale, IntPtr.Zero)
     {
-        _handle = NativeMethods.sb_demo_new((uint)Math.Max(pixelWidth, 1), (uint)Math.Max(pixelHeight, 1), scale);
+    }
+
+    /// <summary>
+    /// GPU host. <paramref name="swapChainPanel"/> is an <c>ISwapChainPanel</c>
+    /// that must stay alive until <see cref="Dispose"/>.
+    /// </summary>
+    public SlintHost(int pixelWidth, int pixelHeight, float scale, IntPtr swapChainPanel)
+    {
+        var width = (uint)Math.Max(pixelWidth, 1);
+        var height = (uint)Math.Max(pixelHeight, 1);
+        _handle = swapChainPanel == IntPtr.Zero
+            ? NativeMethods.sb_demo_new(width, height, scale)
+            : NativeMethods.sb_demo_new_swapchain(swapChainPanel, width, height, scale);
         if (_handle == IntPtr.Zero) throw new SlintException(NativeMethods.LastError());
+        IsGpu = NativeMethods.sb_host_is_gpu(_handle);
         PixelWidth = Math.Max(pixelWidth, 1);
         PixelHeight = Math.Max(pixelHeight, 1);
         _self = GCHandle.Alloc(this, GCHandleType.Weak);
@@ -59,6 +74,15 @@ public sealed class SlintHost : IDisposable
         SbFrame frame;
         fixed (byte* p = bgra)
             frame = NativeMethods.sb_host_render_bgra(_handle, p, (nuint)bgra.Length);
+        if (frame.Failed != 0) throw new SlintException(NativeMethods.LastError());
+        animating = frame.Animating != 0;
+        return frame.Redrawn != 0;
+    }
+
+    /// <summary>Presents one frame into the swap chain. True when a new frame was drawn.</summary>
+    public bool RenderGpu(out bool animating)
+    {
+        var frame = NativeMethods.sb_host_gpu_render(_handle);
         if (frame.Failed != 0) throw new SlintException(NativeMethods.LastError());
         animating = frame.Animating != 0;
         return frame.Redrawn != 0;
