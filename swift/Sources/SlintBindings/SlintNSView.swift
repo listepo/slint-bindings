@@ -272,9 +272,13 @@ public final class SlintNSView: NSView {
         }
         return event.modifierFlags.rawValue & bit != 0
     }
+
+    isolated deinit {
+        displayLink?.invalidate()
+    }
 }
 
-extension SlintNSView: NSTextInputClient {
+extension SlintNSView: @MainActor NSTextInputClient {
     public func insertText(_ string: Any, replacementRange: NSRange) {
         inputClientHandled = true
         let text = Self.plain(string)
@@ -329,7 +333,7 @@ extension SlintNSView: NSTextInputClient {
         return NSRange(location: 0, length: (markedText as NSString).length)
     }
 
-    public var hasMarkedText: Bool { markedText != nil }
+    public func hasMarkedText() -> Bool { markedText != nil }
 
     public func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
         guard let markedText else { return nil }
@@ -366,10 +370,6 @@ extension SlintNSView: NSTextInputClient {
         let start = min(range.location, limit)
         let end = min(range.location + range.length, limit)
         return (Int32(start), Int32(end))
-    }
-
-    isolated deinit {
-        displayLink?.invalidate()
     }
 }
 
