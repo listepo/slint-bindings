@@ -4,8 +4,10 @@
 //! here blocks or spins a loop, so it fits any native run loop (AppKit's main
 //! thread, the WinUI dispatcher) as long as every call comes from that thread.
 
+use std::cell::Cell;
 use std::mem::{align_of, offset_of, size_of};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use slint::platform::software_renderer::{
     MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
@@ -19,6 +21,13 @@ use crate::{Error, platform};
 
 /// Bytes per pixel in the RGBA8 frames handed to the host.
 pub const BYTES_PER_PIXEL: usize = 4;
+
+/// Two vsync callbacks on the same thread closer than this share one timer tick.
+const TICK_COALESCE: Duration = Duration::from_millis(1);
+
+thread_local! {
+    static LAST_TICK: Cell<Option<Instant>> = const { Cell::new(None) };
+}
 
 const TRANSPARENT: PremultipliedRgbaColor = PremultipliedRgbaColor {
     red: 0,
@@ -65,6 +74,21 @@ impl From<PointerButton> for PointerEventButton {
             PointerButton::Left => Self::Left,
             PointerButton::Right => Self::Right,
             PointerButton::Middle => Self::Middle,
+        }
+    }
+}
+
+impl TryFrom<u8> for PointerButton {
+    type Error = Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Left),
+            1 => Ok(Self::Right),
+            2 => Ok(Self::Middle),
+            _ => Err(Error::InvalidArgument(
+                "pointer button must be 0 (left), 1 (right) or 2 (middle)",
+            )),
         }
     }
 }
@@ -217,9 +241,22 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
         })
     }
 
-    /// Advances timers and animations; call once per host frame tick.
+    /// Advances timers and animations. Call once per display refresh.
+    ///
+    /// Timers are thread-global. Two host views often fire their vsync
+    /// callbacks back-to-back; a second call within [`TICK_COALESCE`] is ignored
+    /// so animations do not run twice as fast.
     pub fn tick() {
-        slint::platform::update_timers_and_animations();
+        LAST_TICK.with(|slot| {
+            let now = Instant::now();
+            if let Some(prev) = slot.get()
+                && now.saturating_duration_since(prev) < TICK_COALESCE
+            {
+                return;
+            }
+            slot.set(Some(now));
+            slint::platform::update_timers_and_animations();
+        });
     }
 
     /// Pointer moved to `x`,`y` logical points from the top-left corner.
@@ -302,6 +339,13 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
             preedit,
             utf16_selection_to_utf8(preedit, utf16_start, utf16_end),
         )
+    }
+
+    /// A held key auto-repeated. Distinct from [`Self::key_pressed`].
+    pub fn key_repeated(&self, text: &str) -> Result<(), Error> {
+        self.send(WindowEvent::KeyPressRepeated {
+            text: SharedString::from(text),
+        })
     }
 
     /// Inserts `text` and clears the preedit. This is the commit half of an
@@ -611,6 +655,24 @@ mod tests {
         assert_eq!(host.component().get_name().as_str(), "");
         host.commit_composition("é")?;
         assert_eq!(host.component().get_name().as_str(), "é");
+        Ok(())
+    }
+
+    #[test]
+    fn pointer_button_rejects_out_of_range() {
+        assert!(PointerButton::try_from(0).is_ok());
+        assert!(PointerButton::try_from(2).is_ok());
+        assert!(matches!(
+            PointerButton::try_from(3),
+            Err(Error::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn tick_twice_in_a_row_does_not_panic() -> Result<(), Error> {
+        let _host = demo()?;
+        EmbeddedHost::<DemoForm>::tick();
+        EmbeddedHost::<DemoForm>::tick();
         Ok(())
     }
 

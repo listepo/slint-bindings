@@ -15,12 +15,26 @@ pub use demo::DemoForm;
 pub use host::{EmbeddedHost, Frame, PointerButton};
 pub use keys::{AppKitKey, MOD_COMMAND, MOD_CONTROL, MOD_OPTION, MOD_SHIFT, appkit_key_text};
 
+/// Refuses a call that is not on the thread that first used Slint.
+pub fn check_ui_thread() -> Result<(), Error> {
+    slint_embed::thread::check().map_err(|_| Error::WrongThread)
+}
+
 /// Everything that can go wrong while embedding.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// Another Slint platform (for example winit) was installed first.
     #[error("a different Slint platform is already installed in this process")]
     ForeignPlatform,
+    /// This platform is already set, but for the other buffer type.
+    #[error("the embedding platform is already installed with a different buffer type")]
+    BufferMismatch,
+    /// A call came from a thread other than the one that first used Slint.
+    #[error(
+        "called from a thread other than the one that first used Slint; \
+         Slint is single-threaded"
+    )]
+    WrongThread,
     /// Slint itself refused an operation.
     #[error("slint: {0}")]
     Platform(#[from] slint::PlatformError),

@@ -7,11 +7,11 @@
 use std::ffi::{CStr, CString, c_char, c_void};
 
 use slint_bindings_ffi::{
-    SbFrame, SbHost, SbPointerButton, sb_demo_new, sb_demo_on_submitted, sb_demo_set_name,
-    sb_host_composition_commit, sb_host_composition_update, sb_host_focus_changed,
-    sb_host_frame_len, sb_host_free, sb_host_key_pressed, sb_host_key_released,
-    sb_host_pointer_moved, sb_host_pointer_pressed, sb_host_pointer_released, sb_host_render,
-    sb_host_resize, sb_last_error, sb_tick,
+    SbFrame, SbHost, SbPointerButton, run_on_test_ui_thread, sb_demo_new, sb_demo_on_submitted,
+    sb_demo_set_name, sb_host_composition_commit, sb_host_composition_update,
+    sb_host_focus_changed, sb_host_frame_len, sb_host_free, sb_host_key_pressed,
+    sb_host_key_released, sb_host_key_repeated, sb_host_pointer_moved, sb_host_pointer_pressed,
+    sb_host_pointer_released, sb_host_render, sb_host_resize, sb_last_error, sb_tick,
 };
 
 const FORM_WIDTH: u32 = 320;
@@ -54,12 +54,17 @@ fn click(host: &Host, x: f32, y: f32) {
     // SAFETY: `host` is live until `Host` drops.
     unsafe {
         assert!(sb_host_pointer_moved(host.0, x, y));
-        assert!(sb_host_pointer_pressed(host.0, x, y, SbPointerButton::Left));
+        assert!(sb_host_pointer_pressed(
+            host.0,
+            x,
+            y,
+            SbPointerButton::Left as u8
+        ));
         assert!(sb_host_pointer_released(
             host.0,
             x,
             y,
-            SbPointerButton::Left
+            SbPointerButton::Left as u8
         ));
     }
 }
@@ -98,161 +103,175 @@ fn listen(host: &Host, slot: *mut Vec<String>) {
 
 #[test]
 fn type_ascii_then_continue_submits_the_name() {
-    let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
-    let (frame, buf) = render(&host);
-    assert_eq!(frame.redrawn, 1);
-    assert!(buf.chunks(4).any(|px| px.len() == 4 && px[3] > 0));
+    run_on_test_ui_thread(|| {
+        let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
+        let (frame, buf) = render(&host);
+        assert_eq!(frame.redrawn, 1);
+        assert!(buf.chunks(4).any(|px| px.len() == 4 && px[3] > 0));
 
-    // SAFETY: `host` is live until the end of this test.
-    unsafe { assert!(sb_host_focus_changed(host.0, true)) }
-    click(&host, FIELD_X, FIELD_Y);
-    type_ascii(&host, "Ada");
+        // SAFETY: `host` is live until the end of this test.
+        unsafe { assert!(sb_host_focus_changed(host.0, true)) }
+        click(&host, FIELD_X, FIELD_Y);
+        type_ascii(&host, "Ada");
 
-    let mut submitted = Vec::new();
-    listen(&host, &raw mut submitted);
-    click(&host, BUTTON_X, BUTTON_Y);
-    assert_eq!(submitted, ["Ada"]);
+        let mut submitted = Vec::new();
+        listen(&host, &raw mut submitted);
+        click(&host, BUTTON_X, BUTTON_Y);
+        assert_eq!(submitted, ["Ada"]);
 
-    let (frame, _) = render(&host);
-    assert_eq!(frame.redrawn, 1);
+        let (frame, _) = render(&host);
+        assert_eq!(frame.redrawn, 1);
+    });
 }
 
 #[test]
 fn japanese_preedit_commits_into_the_field() {
-    let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
-    let _ = render(&host);
-    // SAFETY: `host` is live until the end of this test.
-    unsafe { assert!(sb_host_focus_changed(host.0, true)) }
-    click(&host, FIELD_X, FIELD_Y);
+    run_on_test_ui_thread(|| {
+        let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
+        let _ = render(&host);
+        // SAFETY: `host` is live until the end of this test.
+        unsafe { assert!(sb_host_focus_changed(host.0, true)) }
+        click(&host, FIELD_X, FIELD_Y);
 
-    let preedit = CString::new("あ").unwrap_or_default();
-    let committed = CString::new("日本語").unwrap_or_default();
-    // SAFETY: `host` is live; both strings are NUL-terminated.
-    unsafe {
-        assert!(sb_host_composition_update(host.0, preedit.as_ptr(), 0, 1));
-    }
-    let mut submitted = Vec::new();
-    listen(&host, &raw mut submitted);
-    click(&host, BUTTON_X, BUTTON_Y);
-    // The reading is still a preedit, so Continue submits an empty name.
-    assert_eq!(submitted, [""]);
+        let preedit = CString::new("あ").unwrap_or_default();
+        let committed = CString::new("日本語").unwrap_or_default();
+        // SAFETY: `host` is live; both strings are NUL-terminated.
+        unsafe {
+            assert!(sb_host_composition_update(host.0, preedit.as_ptr(), 0, 1));
+        }
+        let mut submitted = Vec::new();
+        listen(&host, &raw mut submitted);
+        click(&host, BUTTON_X, BUTTON_Y);
+        // The reading is still a preedit, so Continue submits an empty name.
+        assert_eq!(submitted, [""]);
 
-    click(&host, FIELD_X, FIELD_Y);
-    // SAFETY: `host` is live; `committed` is NUL-terminated.
-    unsafe {
-        assert!(sb_host_composition_commit(host.0, committed.as_ptr()));
-    }
-    submitted.clear();
-    click(&host, BUTTON_X, BUTTON_Y);
-    assert_eq!(submitted, ["日本語"]);
+        click(&host, FIELD_X, FIELD_Y);
+        // SAFETY: `host` is live; `committed` is NUL-terminated.
+        unsafe {
+            assert!(sb_host_composition_commit(host.0, committed.as_ptr()));
+        }
+        submitted.clear();
+        click(&host, BUTTON_X, BUTTON_Y);
+        assert_eq!(submitted, ["日本語"]);
+    });
 }
 
 #[test]
 fn tab_past_the_last_control_is_not_accepted() {
-    let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
-    let _ = render(&host);
-    // SAFETY: `host` is live until the end of this test.
-    unsafe { assert!(sb_host_focus_changed(host.0, true)) }
-    click(&host, FIELD_X, FIELD_Y);
-    let tab = CString::new("\t").unwrap_or_default();
-    // SAFETY: `host` is live; `tab` is NUL-terminated.
-    unsafe {
-        // Field → button: the view keeps the key.
-        assert!(sb_host_key_pressed(host.0, tab.as_ptr()));
-        assert!(sb_host_key_released(host.0, tab.as_ptr()));
-        // Button → wrap: the host should move focus out, and that is not an error.
-        assert!(!sb_host_key_pressed(host.0, tab.as_ptr()));
-        assert!(sb_last_error().is_null());
-    }
+    run_on_test_ui_thread(|| {
+        let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
+        let _ = render(&host);
+        // SAFETY: `host` is live until the end of this test.
+        unsafe { assert!(sb_host_focus_changed(host.0, true)) }
+        click(&host, FIELD_X, FIELD_Y);
+        let tab = CString::new("\t").unwrap_or_default();
+        // SAFETY: `host` is live; `tab` is NUL-terminated.
+        unsafe {
+            // Field → button: the view keeps the key.
+            assert!(sb_host_key_pressed(host.0, tab.as_ptr()));
+            assert!(sb_host_key_released(host.0, tab.as_ptr()));
+            // Button → wrap: the host should move focus out, and that is not an error.
+            assert!(!sb_host_key_pressed(host.0, tab.as_ptr()));
+            assert!(sb_last_error().is_null());
+        }
+    });
 }
 
 #[test]
 fn enter_in_the_field_submits() {
-    let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
-    let _ = render(&host);
-    unsafe { assert!(sb_host_focus_changed(host.0, true)) }
-    click(&host, FIELD_X, FIELD_Y);
-    type_ascii(&host, "Bea");
+    run_on_test_ui_thread(|| {
+        let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
+        let _ = render(&host);
+        unsafe { assert!(sb_host_focus_changed(host.0, true)) }
+        click(&host, FIELD_X, FIELD_Y);
+        type_ascii(&host, "Bea");
 
-    let mut submitted = Vec::new();
-    listen(&host, &raw mut submitted);
-    type_ascii(&host, "\n");
-    assert_eq!(submitted, ["Bea"]);
+        let mut submitted = Vec::new();
+        listen(&host, &raw mut submitted);
+        type_ascii(&host, "\n");
+        assert_eq!(submitted, ["Bea"]);
+    });
 }
 
 #[test]
 fn host_set_name_reaches_the_submitted_callback() {
-    let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
-    let _ = render(&host);
-    let name = CString::new("Ivan").unwrap_or_default();
-    // SAFETY: `host` is live; `name` is NUL-terminated.
-    unsafe { sb_demo_set_name(host.0, name.as_ptr()) }
-    let mut submitted = Vec::new();
-    listen(&host, &raw mut submitted);
-    click(&host, BUTTON_X, BUTTON_Y);
-    assert_eq!(submitted, ["Ivan"]);
+    run_on_test_ui_thread(|| {
+        let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
+        let _ = render(&host);
+        let name = CString::new("Ivan").unwrap_or_default();
+        // SAFETY: `host` is live; `name` is NUL-terminated.
+        unsafe { sb_demo_set_name(host.0, name.as_ptr()) }
+        let mut submitted = Vec::new();
+        listen(&host, &raw mut submitted);
+        click(&host, BUTTON_X, BUTTON_Y);
+        assert_eq!(submitted, ["Ivan"]);
+    });
 }
 
 #[test]
 fn resize_changes_the_frame_and_a_repeat_does_not_repaint() {
-    let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
-    let _ = render(&host);
-    // SAFETY: `host` is live.
-    unsafe {
-        assert!(sb_host_resize(host.0, FORM_WIDTH, FORM_HEIGHT, 1.0));
-    }
-    let (frame, _) = render(&host);
-    assert_eq!(frame.redrawn, 0);
+    run_on_test_ui_thread(|| {
+        let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
+        let _ = render(&host);
+        // SAFETY: `host` is live.
+        unsafe {
+            assert!(sb_host_resize(host.0, FORM_WIDTH, FORM_HEIGHT, 1.0));
+        }
+        let (frame, _) = render(&host);
+        assert_eq!(frame.redrawn, 0);
 
-    unsafe {
-        assert!(sb_host_resize(
-            host.0,
-            FORM_WIDTH * 2,
-            FORM_HEIGHT * 2,
-            RETINA_SCALE
-        ));
-        assert_eq!(
-            sb_host_frame_len(host.0),
-            (FORM_WIDTH * 2) as usize * (FORM_HEIGHT * 2) as usize * 4
-        );
-    }
-    let (frame, buf) = render(&host);
-    assert_eq!(frame.redrawn, 1);
-    assert!(buf.chunks(4).any(|px| px.len() == 4 && px[3] > 0));
+        unsafe {
+            assert!(sb_host_resize(
+                host.0,
+                FORM_WIDTH * 2,
+                FORM_HEIGHT * 2,
+                RETINA_SCALE
+            ));
+            assert_eq!(
+                sb_host_frame_len(host.0),
+                (FORM_WIDTH * 2) as usize * (FORM_HEIGHT * 2) as usize * 4
+            );
+        }
+        let (frame, buf) = render(&host);
+        assert_eq!(frame.redrawn, 1);
+        assert!(buf.chunks(4).any(|px| px.len() == 4 && px[3] > 0));
+    });
 }
 
 #[test]
 fn retina_demo_frame_paints() {
-    let host = open(RETINA_PIXEL_WIDTH, RETINA_PIXEL_HEIGHT, RETINA_SCALE);
-    let started = std::time::Instant::now();
-    let (frame, buf) = render(&host);
-    let first = started.elapsed();
-    assert_eq!(frame.redrawn, 1);
-    assert!(buf.chunks(4).any(|px| px.len() == 4 && px[3] > 0));
+    run_on_test_ui_thread(|| {
+        let host = open(RETINA_PIXEL_WIDTH, RETINA_PIXEL_HEIGHT, RETINA_SCALE);
+        let started = std::time::Instant::now();
+        let (frame, buf) = render(&host);
+        let first = started.elapsed();
+        assert_eq!(frame.redrawn, 1);
+        assert!(buf.chunks(4).any(|px| px.len() == 4 && px[3] > 0));
 
-    let name = CString::new("Ada").unwrap_or_default();
-    // SAFETY: `host` is live; `name` is NUL-terminated.
-    unsafe { sb_demo_set_name(host.0, name.as_ptr()) }
-    sb_tick();
-    let started = std::time::Instant::now();
-    let (frame, buf) = render(&host);
-    let dirty = started.elapsed();
-    assert_eq!(frame.failed, 0);
-    assert_eq!(frame.redrawn, 1);
+        let name = CString::new("Ada").unwrap_or_default();
+        // SAFETY: `host` is live; `name` is NUL-terminated.
+        unsafe { sb_demo_set_name(host.0, name.as_ptr()) }
+        sb_tick();
+        let started = std::time::Instant::now();
+        let (frame, buf) = render(&host);
+        let dirty = started.elapsed();
+        assert_eq!(frame.failed, 0);
+        assert_eq!(frame.redrawn, 1);
 
-    if std::env::var_os("SB_FRAME_TIME").is_some() {
-        eprintln!(
-            "retina_first_frame_us={} retina_dirty_frame_us={}",
-            first.as_micros(),
-            dirty.as_micros()
-        );
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/demo-frame.rgba");
-        let mut bytes = Vec::with_capacity(buf.len() + 32);
-        bytes.extend(format!("{RETINA_PIXEL_WIDTH} {RETINA_PIXEL_HEIGHT}\n").into_bytes());
-        bytes.extend_from_slice(&buf);
-        let _ = std::fs::write(path, bytes);
-    }
+        if std::env::var_os("SB_FRAME_TIME").is_some() {
+            eprintln!(
+                "retina_first_frame_us={} retina_dirty_frame_us={}",
+                first.as_micros(),
+                dirty.as_micros()
+            );
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target/demo-frame.rgba");
+            let mut bytes = Vec::with_capacity(buf.len() + 32);
+            bytes.extend(format!("{RETINA_PIXEL_WIDTH} {RETINA_PIXEL_HEIGHT}\n").into_bytes());
+            bytes.extend_from_slice(&buf);
+            let _ = std::fs::write(path, bytes);
+        }
+    });
 }
 
 /// The caret blinks, so these frames are taken with nothing focused. A person
@@ -317,8 +336,11 @@ fn assert_snapshot(name: &str, width: u32, height: u32, rgba: &[u8]) {
         "missing snapshot {}; set SB_UPDATE_SNAPSHOTS=1 to write it",
         path.display()
     );
-    let saved = std::fs::read(&path).ok();
-    let Some(saved) = saved else { return };
+    let saved = std::fs::read(&path).unwrap_or_else(|err| {
+        let message = err.to_string();
+        assert!(message.is_empty(), "read {}: {message}", path.display());
+        std::process::abort();
+    });
     let (got_width, got_height, pixels) = must(decode_png(&saved));
     assert_eq!(
         (got_width, got_height, pixels.len()),
@@ -365,21 +387,49 @@ fn paint(width: u32, height: u32, scale: f32, name: Option<&str>) -> Vec<u8> {
 
 #[test]
 fn sign_in_frame_matches_the_snapshot() {
-    let first = paint(FORM_WIDTH, FORM_HEIGHT, 1.0, None);
-    let second = paint(FORM_WIDTH, FORM_HEIGHT, 1.0, None);
-    assert_eq!(
-        differing_pixels(&first, &second),
-        0,
-        "the sign-in frame is not stable across two hosts"
-    );
-    assert_snapshot("sign-in", FORM_WIDTH, FORM_HEIGHT, &first);
+    run_on_test_ui_thread(|| {
+        let first = paint(FORM_WIDTH, FORM_HEIGHT, 1.0, None);
+        let second = paint(FORM_WIDTH, FORM_HEIGHT, 1.0, None);
+        assert_eq!(
+            differing_pixels(&first, &second),
+            0,
+            "the sign-in frame is not stable across two hosts"
+        );
+        // Goldens are rasterised on macOS. Other OSes use different fonts.
+        if !cfg!(target_os = "macos") {
+            return;
+        }
+        assert_snapshot("sign-in", FORM_WIDTH, FORM_HEIGHT, &first);
 
-    let retina = paint(FORM_WIDTH * 2, FORM_HEIGHT * 2, RETINA_SCALE, None);
-    assert_snapshot("sign-in@2x", FORM_WIDTH * 2, FORM_HEIGHT * 2, &retina);
+        let retina = paint(FORM_WIDTH * 2, FORM_HEIGHT * 2, RETINA_SCALE, None);
+        assert_snapshot("sign-in@2x", FORM_WIDTH * 2, FORM_HEIGHT * 2, &retina);
+    });
 }
 
 #[test]
 fn named_field_frame_matches_the_snapshot() {
-    let buf = paint(FORM_WIDTH, FORM_HEIGHT, 1.0, Some("Ada"));
-    assert_snapshot("sign-in-ada", FORM_WIDTH, FORM_HEIGHT, &buf);
+    run_on_test_ui_thread(|| {
+        let buf = paint(FORM_WIDTH, FORM_HEIGHT, 1.0, Some("Ada"));
+        if !cfg!(target_os = "macos") {
+            return;
+        }
+        assert_snapshot("sign-in-ada", FORM_WIDTH, FORM_HEIGHT, &buf);
+    });
+}
+
+#[test]
+fn key_repeat_is_accepted() {
+    run_on_test_ui_thread(|| {
+        let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
+        let _ = render(&host);
+        unsafe { assert!(sb_host_focus_changed(host.0, true)) }
+        click(&host, FIELD_X, FIELD_Y);
+        let a = CString::new("a").unwrap_or_default();
+        // SAFETY: `host` is live; `a` is NUL-terminated.
+        unsafe {
+            assert!(sb_host_key_pressed(host.0, a.as_ptr()));
+            assert!(sb_host_key_repeated(host.0, a.as_ptr()));
+            assert!(sb_host_key_released(host.0, a.as_ptr()));
+        }
+    });
 }

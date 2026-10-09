@@ -109,7 +109,7 @@ public final class SlintNSView: NSView {
         if let trackingArea { removeTrackingArea(trackingArea) }
         let area = NSTrackingArea(
             rect: .zero,
-            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self
         )
         addTrackingArea(area)
@@ -127,6 +127,7 @@ public final class SlintNSView: NSView {
 
     public override func mouseDragged(with event: NSEvent) { mouseMoved(with: event) }
     public override func rightMouseDragged(with event: NSEvent) { mouseMoved(with: event) }
+    public override func otherMouseDragged(with event: NSEvent) { mouseMoved(with: event) }
 
     public override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
@@ -145,7 +146,13 @@ public final class SlintNSView: NSView {
 
     public override func scrollWheel(with event: NSEvent) {
         let p = point(event)
-        host?.pointerScrolled(x: p.x, y: p.y, dx: event.scrollingDeltaX, dy: event.scrollingDeltaY)
+        // Precise devices report points. A mouse wheel reports lines; Slint wants points.
+        let unit: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 16
+        host?.pointerScrolled(
+            x: p.x, y: p.y,
+            dx: event.scrollingDeltaX * unit,
+            dy: event.scrollingDeltaY * unit
+        )
     }
 
     private func press(_ event: NSEvent, _ button: SlintPointerButton) {
@@ -222,7 +229,11 @@ public final class SlintNSView: NSView {
             super.keyDown(with: event)
             return
         }
-        sendText(text)
+        if event.isARepeat {
+            host?.keyRepeated(text)
+        } else {
+            sendText(text)
+        }
     }
 
     private func sendText(_ text: String) {
@@ -355,6 +366,10 @@ extension SlintNSView: NSTextInputClient {
         let start = min(range.location, limit)
         let end = min(range.location + range.length, limit)
         return (Int32(start), Int32(end))
+    }
+
+    isolated deinit {
+        displayLink?.invalidate()
     }
 }
 

@@ -18,21 +18,25 @@ public struct SlintDemoView: NSViewRepresentable {
         // Push only real changes, so a SwiftUI re-render does not overwrite
         // what the user just typed inside Slint.
         var lastPushedName: String?
+        var onSubmit: (@MainActor (String) -> Void)?
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
 
     public func makeNSView(context: Context) -> SlintNSView {
         let view = SlintNSView(frame: .zero)
+        view.host?.onSubmitted { name in
+            context.coordinator.onSubmit?(name)
+        }
         updateNSView(view, context: context)
         return view
     }
 
     public func updateNSView(_ view: SlintNSView, context: Context) {
+        context.coordinator.onSubmit = onSubmit
         if context.coordinator.lastPushedName != name {
             view.host?.setName(name)
             context.coordinator.lastPushedName = name
         }
-        view.host?.onSubmitted(onSubmit)
     }
 }

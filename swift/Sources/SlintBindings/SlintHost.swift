@@ -138,6 +138,10 @@ public final class SlintHost {
         _ = sb_host_composition_commit(handle, text)
     }
 
+    public func keyRepeated(_ text: String) {
+        _ = sb_host_key_repeated(handle, text)
+    }
+
     public func focusChanged(_ focused: Bool) {
         _ = sb_host_focus_changed(handle, focused)
     }
