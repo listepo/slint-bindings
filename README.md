@@ -9,9 +9,11 @@ Slint has no official Swift or WinUI integration (see [research.md](research.md)
 Its supported embedding hook is a custom platform (`slint::platform`), which is
 what this project builds on.
 
-**Status:** M1 spike. The core renders on the CPU into a buffer the host owns;
-the macOS host builds and the demo path is covered by headless end-to-end tests;
-the Windows host is code only and has not been compiled.
+**Status:** M2. The core renders on the CPU into a buffer the host owns.
+The macOS host builds and the demo path is covered by headless end-to-end tests,
+including keyboard and IME composition. The WinUI host compiles in CI: virtual
+keys, IME composition (where the OS provides `CoreTextEditContext`), and a
+per-RID native DLL. The WinUI window itself has not been launched here.
 
 ## Layout
 
@@ -21,7 +23,7 @@ the Windows host is code only and has not been compiled.
 | `crates/slint-bindings-ffi` | `sb_*` C ABI over the core (static library for Swift, DLL for WinUI). Forwards only. |
 | `flutter/` | Copy of [slint_dart](https://github.com/listepo/slint_dart). Its `slint-embed` crate (`flutter/packages/slint/rust/embed`) is the software platform, Dart event map and UI-thread guard shared with the core. |
 | `swift/` | SwiftPM package: `CSlintBindings` (C module over the generated header), `SlintBindings` (`SlintHost`, `SlintNSView`, `SlintDemoView`), `SlintDemo` app. |
-| `windows/` | WinUI 3 `SlintPanel` control and demo app (code-only skeleton). |
+| `windows/` | WinUI 3 `SlintPanel` control and demo app. |
 
 ```text
 SwiftUI / AppKit ─┐                       ┌─ WinUI 3 (C#)
@@ -39,8 +41,8 @@ SwiftUI / AppKit ─┐                       ┌─ WinUI 3 (C#)
 2. On every display-link tick (`CADisplayLink` on macOS,
    `CompositionTarget.Rendering` on WinUI) the host calls `sb_tick` and then
    `sb_host_render`. Slint repaints only when something changed.
-3. The host presents the RGBA8 buffer (`CGImage` layer contents on macOS,
-   `WriteableBitmap` on WinUI).
+3. The host presents the frame (`CGImage` layer contents on macOS take RGBA8;
+   WinUI `WriteableBitmap` takes BGRA8 from `sb_host_render_bgra`).
 4. Mouse, scroll, keyboard and focus events go back through `sb_host_*` in
    logical points from the top-left corner.
 
@@ -50,7 +52,7 @@ All calls happen on the host's UI thread: Slint objects are single-threaded.
 
 ```sh
 mise install      # Rust 1.99, cargo-nextest, just; cbindgen via `cargo install cbindgen`
-just check        # fmt, clippy, tests, header drift, swift build, swift test
+just check        # fmt, clippy, tests, header drift, P/Invoke drift, swift build, swift test
 just swift-run    # opens the SwiftUI demo window
 ```
 
@@ -61,6 +63,7 @@ Windows: see [windows/README.md](windows/README.md).
 - [plan.md](plan.md): milestones and active tasks
 - [research.md](research.md): how Slint can be embedded, with sources
 - [toolchain.md](toolchain.md): programs and packages
+- [Русский](docs/ru/README.md), [Українська](docs/uk/README.md)
 
 ## License
 

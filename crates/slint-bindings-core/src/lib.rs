@@ -8,12 +8,16 @@
 
 mod demo;
 mod host;
+mod ime;
 mod keys;
 mod platform;
 
 pub use demo::DemoForm;
 pub use host::{EmbeddedHost, Frame, PointerButton};
-pub use keys::{AppKitKey, MOD_COMMAND, MOD_CONTROL, MOD_OPTION, MOD_SHIFT, appkit_key_text};
+pub use keys::{
+    AppKitKey, MOD_COMMAND, MOD_CONTROL, MOD_OPTION, MOD_SHIFT, VirtualKeyEvent, appkit_key_text,
+    virtual_key_command, virtual_key_text,
+};
 
 /// Refuses a call that is not on the thread that first used Slint.
 pub fn check_ui_thread() -> Result<(), Error> {

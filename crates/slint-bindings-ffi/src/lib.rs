@@ -13,7 +13,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 
 use slint_bindings_core::{
-    AppKitKey, DemoForm, EmbeddedHost, Error, PointerButton, appkit_key_text,
+    AppKitKey, DemoForm, EmbeddedHost, Error, PointerButton, VirtualKeyEvent, appkit_key_text,
+    virtual_key_command, virtual_key_text,
 };
 
 thread_local! {
@@ -88,6 +89,27 @@ fn guard<T>(fail: T, body: impl FnOnce() -> Result<T, Error>) -> T {
 unsafe fn host_ref<'a>(host: *const SbHost) -> Option<&'a SbHost> {
     // SAFETY: the caller guarantees `host` is null or live and unaliased by `sb_host_free`.
     unsafe { host.as_ref() }
+}
+
+/// Writes `text` and a trailing NUL into `out`.
+///
+/// # Safety
+/// `out` must be null or valid for `out_len` writable bytes.
+unsafe fn write_utf8(out: *mut c_char, out_len: usize, text: &str) -> Result<(), Error> {
+    if out.is_null() || out_len == 0 {
+        return Err(Error::InvalidArgument("the text buffer is missing"));
+    }
+    let bytes = text.as_bytes();
+    if bytes.len() >= out_len {
+        return Err(Error::InvalidArgument("the text buffer is too small"));
+    }
+    // SAFETY: `out` is valid for `out_len` bytes and `bytes.len() < out_len`,
+    // so the copy and the trailing NUL stay inside the buffer.
+    unsafe {
+        ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast(), bytes.len());
+        *out.add(bytes.len()) = 0;
+    }
+    Ok(())
 }
 
 /// # Safety
@@ -181,6 +203,41 @@ pub unsafe extern "C" fn sb_host_render(host: *mut SbHost, buf: *mut u8, len: us
         // SAFETY: the caller guarantees `buf` is valid for `len` writable bytes.
         let out = unsafe { std::slice::from_raw_parts_mut(buf, len) };
         let frame = h.host.render(out)?;
+        Ok(SbFrame {
+            redrawn: frame.redrawn.into(),
+            animating: frame.animating.into(),
+            failed: 0,
+        })
+    })
+}
+
+/// Renders into `buf` (premultiplied BGRA8, `len` bytes) if the scene changed.
+///
+/// WinUI wants this order. macOS keeps using [`sb_host_render`].
+///
+/// # Safety
+/// `host` must be null or live; `buf` must be valid for `len` writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_render_bgra(
+    host: *mut SbHost,
+    buf: *mut u8,
+    len: usize,
+) -> SbFrame {
+    let failed = SbFrame {
+        failed: 1,
+        ..SbFrame::default()
+    };
+    guard(failed, || {
+        // SAFETY: forwarded caller contract.
+        let Some(h) = (unsafe { host.as_mut() }) else {
+            return Err(Error::InvalidArgument("a null host was passed"));
+        };
+        if buf.is_null() {
+            return Err(Error::InvalidArgument("a null pixel buffer was passed"));
+        }
+        // SAFETY: the caller guarantees `buf` is valid for `len` writable bytes.
+        let out = unsafe { std::slice::from_raw_parts_mut(buf, len) };
+        let frame = h.host.render_bgra(out)?;
         Ok(SbFrame {
             redrawn: frame.redrawn.into(),
             animating: frame.animating.into(),
@@ -401,6 +458,136 @@ pub unsafe extern "C" fn sb_host_composition_commit(
     })
 }
 
+/// The WinUI edit context opened a composition.
+///
+/// # Safety
+/// `host` must be null or live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_ime_started(host: *const SbHost) -> bool {
+    unsafe { with_host(host, |h| h.host.ime_started()) }
+}
+
+/// 1 while a WinUI composition is open.
+///
+/// Returns false when nothing is composing or the call failed. A failure sets
+/// `sb_last_error`; a closed composition leaves it null.
+///
+/// # Safety
+/// `host` must be null or live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_ime_composing(host: *const SbHost) -> bool {
+    guard(false, || {
+        // SAFETY: forwarded caller contract.
+        let Some(h) = (unsafe { host_ref(host) }) else {
+            return Err(Error::InvalidArgument("a null host was passed"));
+        };
+        Ok(h.host.ime_composing())
+    })
+}
+
+/// Writes the preedit the edit context should read back. Empty when nothing is composing.
+///
+/// # Safety
+/// `host` must be null or live. `out` must be null or valid for `out_len` writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_ime_text(
+    host: *const SbHost,
+    out: *mut c_char,
+    out_len: usize,
+) -> bool {
+    guard(false, || {
+        // SAFETY: forwarded caller contract.
+        let Some(h) = (unsafe { host_ref(host) }) else {
+            return Err(Error::InvalidArgument("a null host was passed"));
+        };
+        let text = h.host.ime_document();
+        // SAFETY: forwarded caller contract.
+        unsafe { write_utf8(out, out_len, &text) }?;
+        Ok(true)
+    })
+}
+
+/// Writes the preedit caret, in UTF-16 code units.
+///
+/// # Safety
+/// `host` must be null or live. `start` and `end` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_ime_selection(
+    host: *const SbHost,
+    start: *mut i32,
+    end: *mut i32,
+) -> bool {
+    guard(false, || {
+        // SAFETY: forwarded caller contract.
+        let Some(h) = (unsafe { host_ref(host) }) else {
+            return Err(Error::InvalidArgument("a null host was passed"));
+        };
+        if start.is_null() || end.is_null() {
+            return Err(Error::InvalidArgument(
+                "the IME selection pointers are missing",
+            ));
+        }
+        let (sel_start, sel_end) = h.host.ime_selection();
+        // SAFETY: both pointers are non-null and writable for one `i32`.
+        unsafe {
+            *start = sel_start;
+            *end = sel_end;
+        }
+        Ok(true)
+    })
+}
+
+/// Applies one `TextUpdating` from the WinUI edit context.
+///
+/// `range_start`/`range_end` and `sel_start`/`sel_end` are UTF-16 carets inside
+/// the preedit. Returns false on failure; see `sb_last_error`.
+///
+/// # Safety
+/// `host` must be null or live; `text` null or NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_ime_replace(
+    host: *const SbHost,
+    range_start: i32,
+    range_end: i32,
+    text: *const c_char,
+    sel_start: i32,
+    sel_end: i32,
+) -> bool {
+    guard(false, || {
+        // SAFETY: forwarded caller contract.
+        let Some(h) = (unsafe { host_ref(host) }) else {
+            return Err(Error::InvalidArgument("a null host was passed"));
+        };
+        // SAFETY: forwarded caller contract.
+        h.host.ime_replace(
+            range_start,
+            range_end,
+            unsafe { str_arg(text) }?,
+            sel_start,
+            sel_end,
+        )?;
+        Ok(true)
+    })
+}
+
+/// Applies one `SelectionUpdating` from the WinUI edit context.
+///
+/// # Safety
+/// `host` must be null or live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_ime_select(host: *const SbHost, start: i32, end: i32) -> bool {
+    unsafe { with_host(host, |h| h.host.ime_select(start, end)) }
+}
+
+/// Applies `CompositionCompleted`. `canceled` drops the preedit.
+///
+/// # Safety
+/// `host` must be null or live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_host_ime_completed(host: *const SbHost, canceled: bool) -> bool {
+    unsafe { with_host(host, |h| h.host.ime_completed(canceled)) }
+}
+
 /// Writes the Slint key text for one AppKit key event into `out`.
 ///
 /// Returns true when a key was written. Returns false when the event is not a
@@ -420,9 +607,6 @@ pub unsafe extern "C" fn sb_appkit_key_text(
     out_len: usize,
 ) -> bool {
     guard(false, || {
-        if out.is_null() || out_len == 0 {
-            return Err(Error::InvalidArgument("the key text buffer is missing"));
-        }
         // SAFETY: forwarded caller contract.
         let characters = unsafe { str_arg(characters) }?;
         // SAFETY: forwarded caller contract.
@@ -433,16 +617,66 @@ pub unsafe extern "C" fn sb_appkit_key_text(
             characters_ignoring_modifiers: ignoring,
             modifiers,
         });
-        let bytes = text.as_deref().unwrap_or("").as_bytes();
-        if bytes.len() >= out_len {
-            return Err(Error::InvalidArgument("the key text buffer is too small"));
-        }
-        // SAFETY: `out` is valid for `out_len` bytes and `bytes.len() < out_len`,
-        // so the copy and the trailing NUL stay inside the buffer.
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast(), bytes.len());
-            *out.add(bytes.len()) = 0;
-        }
+        // SAFETY: forwarded caller contract.
+        unsafe { write_utf8(out, out_len, text.as_deref().unwrap_or("")) }?;
+        Ok(text.is_some())
+    })
+}
+
+/// Writes the Slint key text for a WinUI virtual key that has no character.
+///
+/// Returns true when a key was written. Returns false when the host should
+/// wait for a character (`sb_last_error` is then null) or the call failed.
+///
+/// # Safety
+/// `out` must be null or valid for `out_len` writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_virtual_key_command(
+    virtual_key: u16,
+    shift: bool,
+    out: *mut c_char,
+    out_len: usize,
+) -> bool {
+    guard(false, || {
+        let text = virtual_key_command(virtual_key, shift);
+        let written = text.map(|ch| ch.to_string());
+        // SAFETY: forwarded caller contract.
+        unsafe { write_utf8(out, out_len, written.as_deref().unwrap_or("")) }?;
+        Ok(text.is_some())
+    })
+}
+
+/// Writes the Slint key text for one WinUI key event into `out`.
+///
+/// `character` is the layout-produced text, or empty. `shift` and `control`
+/// are the modifier state. Returns true when a key was written. Returns false
+/// when the event is not a Slint key (the buffer is then empty and
+/// `sb_last_error` is null) or the call failed.
+///
+/// # Safety
+/// `character` must be null or NUL-terminated. `out` must be null or valid
+/// for `out_len` writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sb_virtual_key_text(
+    virtual_key: u16,
+    character: *const c_char,
+    shift: bool,
+    control: bool,
+    out: *mut c_char,
+    out_len: usize,
+) -> bool {
+    guard(false, || {
+        // SAFETY: forwarded caller contract.
+        let character = unsafe { str_arg(character) }?;
+        let text = virtual_key_text(VirtualKeyEvent {
+            virtual_key,
+            character,
+            shift,
+            control,
+        });
+        let written = text.map(|ch| ch.to_string());
+        // SAFETY: forwarded caller contract.
+        unsafe { write_utf8(out, out_len, written.as_deref().unwrap_or("")) }?;
         Ok(text.is_some())
     })
 }

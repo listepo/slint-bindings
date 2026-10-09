@@ -4,7 +4,7 @@
 //! here blocks or spins a loop, so it fits any native run loop (AppKit's main
 //! thread, the WinUI dispatcher) as long as every call comes from that thread.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::mem::{align_of, offset_of, size_of};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -15,6 +15,7 @@ use slint::platform::software_renderer::{
 use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent, WindowEventDispatchResult};
 use slint::{ComponentHandle, LogicalPosition, LogicalSize, PhysicalSize, SharedString};
 
+use crate::ime::{ImeSession, ImeUpdate};
 use crate::keys::utf16_selection_to_utf8;
 
 use crate::{Error, platform};
@@ -113,6 +114,9 @@ pub struct EmbeddedHost<C: ComponentHandle> {
     /// The pixel storage was replaced. The reused-buffer renderer would otherwise
     /// repaint only dirty items and leave the rest of the new buffer transparent.
     full_repaint: bool,
+    /// WinUI IME preedit. Input methods take `&self` because the window
+    /// adapter already mutates through interior cells; the preedit does too.
+    ime: RefCell<ImeSession>,
 }
 
 impl<C: ComponentHandle> EmbeddedHost<C> {
@@ -141,6 +145,7 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
             height: 0,
             scale,
             full_repaint: true,
+            ime: RefCell::new(ImeSession::default()),
         };
         host.resize(width, height, scale)?;
         Ok(host)
@@ -200,6 +205,18 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
     /// if anything changed. When nothing changed `out` is left untouched, so the
     /// host keeps presenting the previous frame.
     pub fn render(&mut self, out: &mut [u8]) -> Result<Frame, Error> {
+        self.render_pixels(out, false)
+    }
+
+    /// Like [`Self::render`], but the bytes are premultiplied BGRA8.
+    ///
+    /// WinUI `WriteableBitmap` and DXGI swap chains store that order. Swapping
+    /// here keeps the C# host from walking the frame a second time.
+    pub fn render_bgra(&mut self, out: &mut [u8]) -> Result<Frame, Error> {
+        self.render_pixels(out, true)
+    }
+
+    fn render_pixels(&mut self, out: &mut [u8], bgra: bool) -> Result<Frame, Error> {
         let needed = self.frame_len();
         if out.len() < needed {
             return Err(Error::BufferTooSmall {
@@ -233,7 +250,11 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
                     "internal frame size does not match the pixel buffer",
                 ));
             }
-            write_frame(out, &self.pixels);
+            if bgra {
+                write_frame_bgra(out, &self.pixels);
+            } else {
+                write_frame(out, &self.pixels);
+            }
         }
         Ok(Frame {
             redrawn,
@@ -360,6 +381,72 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
         )
     }
 
+    /// The WinUI edit context opened a composition.
+    pub fn ime_started(&self) -> Result<(), Error> {
+        self.ime.borrow_mut().started();
+        Ok(())
+    }
+
+    /// True while a WinUI composition is open.
+    pub fn ime_composing(&self) -> bool {
+        self.ime.borrow().composing()
+    }
+
+    /// The preedit the edit context should read back. Empty when nothing is composing.
+    pub fn ime_document(&self) -> String {
+        self.ime.borrow().document().to_owned()
+    }
+
+    /// Caret inside the preedit, in UTF-16 code units. `(0, 0)` when nothing is composing.
+    pub fn ime_selection(&self) -> (i32, i32) {
+        self.ime.borrow().selection()
+    }
+
+    /// Apply one `TextUpdating` from `CoreTextEditContext`.
+    pub fn ime_replace(
+        &self,
+        range_start: i32,
+        range_end: i32,
+        text: &str,
+        sel_start: i32,
+        sel_end: i32,
+    ) -> Result<(), Error> {
+        let update =
+            self.ime
+                .borrow_mut()
+                .replace(range_start, range_end, text, sel_start, sel_end)?;
+        self.apply_ime(update)
+    }
+
+    /// Apply one `SelectionUpdating` from `CoreTextEditContext`.
+    pub fn ime_select(&self, start: i32, end: i32) -> Result<(), Error> {
+        let update = self.ime.borrow_mut().set_selection(start, end);
+        self.apply_ime(update)
+    }
+
+    /// Apply `CompositionCompleted`. `canceled` drops the preedit.
+    pub fn ime_completed(&self, canceled: bool) -> Result<(), Error> {
+        let update = self.ime.borrow_mut().completed(canceled);
+        self.apply_ime(update)
+    }
+
+    fn apply_ime(&self, update: ImeUpdate) -> Result<(), Error> {
+        match update {
+            ImeUpdate::Ignored => Ok(()),
+            ImeUpdate::Preedit {
+                text,
+                utf16_start,
+                utf16_end,
+            } => self.update_composition(&text, utf16_start, utf16_end),
+            ImeUpdate::Commit { text } => self.commit_composition(&text),
+            ImeUpdate::Clear => self.update_composition("", -1, -1),
+            ImeUpdate::Character { text } => {
+                let _accepted = self.key_pressed(&text)?;
+                self.key_released(&text)
+            }
+        }
+    }
+
     /// The host view gained or lost keyboard focus.
     pub fn focus_changed(&self, focused: bool) -> Result<(), Error> {
         self.send(WindowEvent::WindowActiveChanged(focused))
@@ -465,6 +552,18 @@ fn write_frame(out: &mut [u8], pixels: &[PremultipliedRgbaColor]) {
     // (`repr(C)`, 4 bytes, align 1), so this slice is the pixel bytes and nothing past them.
     let src = unsafe { std::slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), len) };
     dst.copy_from_slice(src);
+}
+
+/// Copies packed BGRA8 into `out`. Same layout rules as [`write_frame`].
+fn write_frame_bgra(out: &mut [u8], pixels: &[PremultipliedRgbaColor]) {
+    let len = pixels.len() * BYTES_PER_PIXEL;
+    let Some(dst) = out.get_mut(..len) else {
+        return;
+    };
+    let (slots, _) = dst.as_chunks_mut::<BYTES_PER_PIXEL>();
+    for (px, slot) in pixels.iter().zip(slots) {
+        *slot = [px.blue, px.green, px.red, px.alpha];
+    }
 }
 
 #[cfg(test)]
@@ -673,6 +772,59 @@ mod tests {
         let _host = demo()?;
         EmbeddedHost::<DemoForm>::tick();
         EmbeddedHost::<DemoForm>::tick();
+        Ok(())
+    }
+
+    #[test]
+    fn bgra_frame_swaps_red_and_blue() -> Result<(), Error> {
+        let mut rgba_host = demo()?;
+        let mut bgra_host = demo()?;
+        let mut rgba = vec![0u8; rgba_host.frame_len()];
+        let mut bgra = vec![0u8; bgra_host.frame_len()];
+        assert!(rgba_host.render(&mut rgba)?.redrawn);
+        assert!(bgra_host.render_bgra(&mut bgra)?.redrawn);
+        let mut differs = false;
+        let (rgba_px, _) = rgba.as_chunks::<4>();
+        let (bgra_px, _) = bgra.as_chunks::<4>();
+        for (px, qx) in rgba_px.iter().zip(bgra_px) {
+            assert_eq!(px[0], qx[2]);
+            assert_eq!(px[1], qx[1]);
+            assert_eq!(px[2], qx[0]);
+            assert_eq!(px[3], qx[3]);
+            if px[0] != px[2] {
+                differs = true;
+            }
+        }
+        assert!(
+            differs,
+            "the frame never put red and blue on different values"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn windows_ime_commits_a_preedit_and_inserts_a_direct_character() -> Result<(), Error> {
+        let host = demo()?;
+        host.focus_changed(true)?;
+        press(&host, 160.0, 64.0)?;
+        host.ime_started()?;
+        host.ime_replace(0, 0, "あ", 0, 1)?;
+        assert_eq!(host.ime_document(), "あ");
+        assert!(host.ime_composing());
+        assert_eq!(host.component().get_name().as_str(), "");
+        host.ime_replace(0, 1, "日", 0, 1)?;
+        host.ime_completed(false)?;
+        assert_eq!(host.component().get_name().as_str(), "日");
+        assert!(!host.ime_composing());
+        assert_eq!(host.ime_document(), "");
+
+        host.ime_replace(0, 0, "A", 1, 1)?;
+        assert_eq!(host.component().get_name().as_str(), "日A");
+
+        host.ime_started()?;
+        host.ime_replace(0, 0, "か", 0, 1)?;
+        host.ime_completed(true)?;
+        assert_eq!(host.component().get_name().as_str(), "日A");
         Ok(())
     }
 

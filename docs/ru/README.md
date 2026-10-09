@@ -1,0 +1,68 @@
+# Slint Bindings
+
+Встраивает интерфейсы [Slint](https://slint.dev) в нативные приложения: `NSView` / SwiftUI
+на macOS и элемент WinUI 3 на Windows. Цикл событий принадлежит хосту.
+Позже то же ядро рисует деревья Weft (соседний проект `weft`) нативно, а веб-сборка
+переиспользует его через WebAssembly.
+
+У Slint нет официальной интеграции со Swift или WinUI (см. [research.md](../../research.md)).
+Поддерживаемый способ встраивания — своя платформа (`slint::platform`); на ней и построен проект.
+
+**Статус:** M2. Ядро рисует на CPU в буфер, которым владеет хост.
+macOS-хост собирается, а путь демо покрыт тестами без окна, включая клавиатуру
+и композицию IME. WinUI-хост собирается в CI: виртуальные клавиши, композиция IME
+(когда ОС даёт `CoreTextEditContext`) и нативная DLL на каждый RID.
+Окно WinUI здесь не запускалось.
+
+## Состав
+
+| Путь | Что это |
+| --- | --- |
+| `crates/slint-bindings-core` | Платформа Slint, которой управляет хост: программный рендерер в RGBA-буфер вызывающего, ввод, таймеры. Здесь живёт демо-компонент. |
+| `crates/slint-bindings-ffi` | C ABI `sb_*` поверх ядра (статическая библиотека для Swift, DLL для WinUI). Только пересылает вызовы. |
+| `flutter/` | Копия [slint_dart](https://github.com/listepo/slint_dart). Крейт `slint-embed` (`flutter/packages/slint/rust/embed`) — общая программная платформа, карта событий Dart FFI и проверка UI-потока. |
+| `swift/` | Пакет SwiftPM: `CSlintBindings` (модуль C над сгенерированным заголовком), `SlintBindings` (`SlintHost`, `SlintNSView`, `SlintDemoView`), приложение `SlintDemo`. |
+| `windows/` | Элемент WinUI 3 `SlintPanel` и демо-приложение. |
+
+```text
+SwiftUI / AppKit ─┐                       ┌─ WinUI 3 (C#)
+  SlintDemoView   │   sb_* C ABI          │   SlintPanel
+  SlintNSView     ├──▶ slint-bindings-ffi ◀┤   SlintHost (P/Invoke)
+  SlintHost       │         │             │
+                  │   slint-bindings-core │
+                  │   (slint-embed        │
+                  │    SoftwareRenderer)  │
+```
+
+## Как получается кадр
+
+1. Хост следит за размером и масштабом и вызывает `sb_host_resize`.
+2. На каждом тике (`CADisplayLink` на macOS, `CompositionTarget.Rendering` в WinUI)
+   хост вызывает `sb_tick`, затем `sb_host_render`. Slint перерисовывает кадр только когда что-то изменилось.
+3. Хост показывает кадр (содержимое слоя `CGImage` на macOS — RGBA8;
+   `WriteableBitmap` в WinUI — BGRA8 из `sb_host_render_bgra`).
+4. Мышь, прокрутка, клавиатура и фокус возвращаются через `sb_host_*`
+   в логических точках от левого верхнего угла.
+
+Все вызовы идут из UI-потока хоста: объекты Slint однопоточные.
+
+## Сборка и запуск (macOS, Apple Silicon)
+
+```sh
+mise install      # Rust 1.99, cargo-nextest, just; cbindgen через `cargo install cbindgen`
+just check        # fmt, clippy, тесты, дрейф заголовка, дрейф P/Invoke, swift build, swift test
+just swift-run    # открывает окно демо SwiftUI
+```
+
+Windows: см. [windows/README.md](windows/README.md).
+
+## Документы
+
+- [plan.md](../../plan.md): этапы и текущие задачи
+- [research.md](../../research.md): как можно встроить Slint, с источниками
+- [toolchain.md](../../toolchain.md): программы и пакеты
+- [English](../../README.md), [Українська](../uk/README.md)
+
+## Лицензия
+
+Apache-2.0. См. [LICENSE](../../LICENSE).

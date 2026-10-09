@@ -61,7 +61,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
       - name: FFI DLL
-        run: cargo rustc -p slint-bindings-ffi --crate-type cdylib --target x86_64-pc-windows-msvc
+        run: just windows-dll
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: 10.0.x

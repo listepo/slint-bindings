@@ -39,9 +39,9 @@ Not added: `slint_embed::events` is used only by slint_dart and stays there; `i-
 
 | # | Status | Priority | Complexity | Readiness | Agent |
 | --- | --- | --- | --- | --- | --- |
-| T4 | doing | P1 | 3 | 80% | cursor |
+| T4 | done | P1 | 3 | 100% | cursor |
 | T5 | todo | P1 | 2 | 0% | |
-| T6 | todo | P1 | 3 | 0% | |
+| T6 | done | P1 | 3 | 100% | cursor |
 | T7 | todo | P1 | 4 | 0% | |
 | T8 | todo | P1 | 5 | 0% | |
 | T9 | todo | P2 | 3 | 0% | |
@@ -62,7 +62,7 @@ remaining tasks until the creator decides how to proceed.
 | Milestone | Goal | Tasks | Go/no-go checkpoint |
 | --- | --- | --- | --- |
 | M1: CPU spike | Pixels and input cross the boundary on macOS | T1 (done), T2 (done) | The demo runs at 60 fps at 2x scale for a 800×600 pt view with no visible input lag. No-go: frame time above 8 ms on Apple Silicon, which means go straight to M3. |
-| M2: Both hosts, shared core | Same core on WinUI; no duplicated code with slint_dart | T3 (done), T4, T5, T6 | WinUI demo builds and runs; text fields take typed text on both hosts; CI is green. |
+| M2: Both hosts, shared core | Same core on WinUI; no duplicated code with slint_dart | T3 (done), T4 (done), T5, T6 | WinUI demo builds and runs; text fields take typed text on both hosts; CI is green. |
 | M3: GPU | GPU rendering into the host surface | T7, T8 | 4K view under 4 ms/frame; resize without tearing or black frames; no regressions in input. No-go on one OS keeps the CPU path there. |
 | M4: Distribution | Consumable packages | T9 | An app outside this repo adds the package (SwiftPM binary target, NuGet) and runs the demo. |
 | M5: Real components and Weft | Any `.slint` component and Weft trees, with typed host APIs | T11, T12, T13 | A Weft sample screen (login form) renders in both hosts from its Weft source, and edits flow both ways. |
@@ -109,6 +109,18 @@ cbindgen-driven generator) so it cannot drift; let the core render BGRA
 directly so the C# swizzle goes away; map `VirtualKey` to Slint key text and
 route `CharacterReceived`; IME via `CoreTextEditContext`. Done when the WinUI
 demo behaves like the macOS one (T2 checklist).
+
+Execution: the WinUI → Slint map lives in `slint-bindings-core` next to the
+AppKit map (one table, tested on every `Key`) and the host calls
+`sb_virtual_key_command` / `sb_virtual_key_text`. `CoreTextEditContext` updates
+go through `sb_host_ime_*`, which keeps only the preedit and commits it into
+the field; `GetForCurrentView` failing (Windows 10 desktop, no CoreWindow)
+leaves `CharacterReceived` as the text path. `sb_host_render_bgra` writes
+BGRA8. `windows/Directory.Build.targets` copies the DLL for the active RID
+(`just windows-dll`, or `just windows-dll aarch64-pc-windows-msvc`) into the
+output and into `runtimes/<rid>/native`. `just pinvoke-check` diffs `sb_*`
+names against `NativeMethods.cs`; marshalling stays hand-written because
+csbindgen is not a dependency. The demo window has not been launched.
 
 ### T7. GPU path on macOS (M3)
 

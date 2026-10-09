@@ -1,5 +1,6 @@
 // P/Invoke declarations for the sb_* C ABI (swift/Sources/CSlintBindings/slint_bindings.h).
-// Keep in sync with the header; M2 generates this file instead (csbindgen or a cbindgen-driven step).
+// `just pinvoke-check` fails when an sb_* export is missing here or invented here.
+// Marshalling stays hand-written: csbindgen is not a dependency of this repo.
 
 using System;
 using System.Runtime.InteropServices;
@@ -31,6 +32,7 @@ internal static partial class NativeMethods
     internal static partial bool sb_host_resize(IntPtr host, uint width, uint height, float scale);
 
     [LibraryImport(Lib)] internal static unsafe partial SbFrame sb_host_render(IntPtr host, byte* buf, nuint len);
+    [LibraryImport(Lib)] internal static unsafe partial SbFrame sb_host_render_bgra(IntPtr host, byte* buf, nuint len);
     [LibraryImport(Lib)] internal static partial void sb_tick();
 
     [LibraryImport(Lib)]
@@ -81,6 +83,46 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.U1)]
     internal static unsafe partial bool sb_appkit_key_text(
         ushort keyCode, string characters, string ignoring, uint modifiers, byte* buffer, nuint bufferLen);
+
+    [LibraryImport(Lib)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static unsafe partial bool sb_virtual_key_command(
+        ushort virtualKey, [MarshalAs(UnmanagedType.U1)] bool shift, byte* buffer, nuint bufferLen);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static unsafe partial bool sb_virtual_key_text(
+        ushort virtualKey, string character, [MarshalAs(UnmanagedType.U1)] bool shift,
+        [MarshalAs(UnmanagedType.U1)] bool control, byte* buffer, nuint bufferLen);
+
+    [LibraryImport(Lib)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool sb_host_ime_started(IntPtr host);
+
+    [LibraryImport(Lib)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool sb_host_ime_composing(IntPtr host);
+
+    [LibraryImport(Lib)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static unsafe partial bool sb_host_ime_text(IntPtr host, byte* buffer, nuint bufferLen);
+
+    [LibraryImport(Lib)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static unsafe partial bool sb_host_ime_selection(IntPtr host, int* start, int* end);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool sb_host_ime_replace(
+        IntPtr host, int rangeStart, int rangeEnd, string text, int selStart, int selEnd);
+
+    [LibraryImport(Lib)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool sb_host_ime_select(IntPtr host, int start, int end);
+
+    [LibraryImport(Lib)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool sb_host_ime_completed(IntPtr host, [MarshalAs(UnmanagedType.U1)] bool canceled);
 
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void sb_demo_set_name(IntPtr host, string name);

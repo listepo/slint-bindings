@@ -1,12 +1,11 @@
-//! AppKit key events to the text [`slint::platform::Key`] uses.
+//! Host key events to the text [`slint::platform::Key`] uses.
 //!
 //! Slint names a key by a single Unicode scalar (control characters for
 //! modifiers and editing keys, the Cocoa private-use range for arrows and
-//! function keys, the typed character otherwise). AppKit does not hand those
-//! scalars over unchanged: Backspace arrives as DEL, Return as CR, Forward
-//! Delete as U+F728, and Shift-Tab as BACKTAB. Virtual key codes cover the
-//! keys that have no character (modifiers) and the ones whose character
-//! depends on the layout (function keys, Home, End, Page Up, Page Down).
+//! function keys, the typed character otherwise). Neither AppKit nor WinUI
+//! hands those scalars over unchanged. AppKit reports Backspace as DEL and
+//! Shift-Tab as BACKTAB; WinUI reports a `VirtualKey` plus, for printable
+//! keys, the character the layout produced. The maps below cover both.
 
 /// `NSEventModifierFlagShift`.
 pub const MOD_SHIFT: u32 = 1 << 17;
@@ -114,7 +113,7 @@ fn from_key_code(key_code: u16, modifiers: u32) -> Option<char> {
     })
 }
 
-/// Characters AppKit produces that are not the scalar Slint stores for that key.
+/// Characters AppKit and WinUI produce that are not the scalar Slint stores for that key.
 fn remap_character(ch: char) -> char {
     match ch {
         '\r' | '\u{3}' => '\n', // Return, Enter
@@ -122,6 +121,134 @@ fn remap_character(ch: char) -> char {
         '\u{F728}' => '\u{7F}', // Forward Delete
         other => other,
     }
+}
+
+/// One WinUI `KeyRoutedEventArgs`, optionally with the character
+/// `CharacterReceived` reported for the same press.
+#[derive(Debug, Clone, Copy)]
+pub struct VirtualKeyEvent<'a> {
+    /// `Windows.System.VirtualKey` as `u16`. The numbers match Win32 `VK_*`.
+    pub virtual_key: u16,
+    /// Layout-produced character, or empty when the event is only a virtual key.
+    pub character: &'a str,
+    /// Shift is down. Distinguishes Tab from Backtab.
+    pub shift: bool,
+    /// Control is down. Shortcuts name the virtual key, not the control character.
+    pub control: bool,
+}
+
+/// The Slint key text for a WinUI virtual key that has no character of its own
+/// (arrows, editing keys, modifiers, function keys), or `None` when the host
+/// should wait for [`virtual_key_text`] and a character.
+pub fn virtual_key_command(virtual_key: u16, shift: bool) -> Option<char> {
+    named_virtual_key(virtual_key, shift)
+}
+
+/// The Slint key text for one WinUI key event, or `None` when it is not a
+/// Slint key (a mouse button, an empty event, a multi-scalar IME commit).
+pub fn virtual_key_text(key: VirtualKeyEvent<'_>) -> Option<char> {
+    if let Some(named) = named_virtual_key(key.virtual_key, key.shift) {
+        return Some(named);
+    }
+    // Ctrl+C arrives as a control character. The shortcut names the key.
+    if key.control
+        && let Some(named) = unshifted_key(key.virtual_key)
+    {
+        return Some(named);
+    }
+    if let Some(ch) = one_scalar(key.character) {
+        return Some(remap_character(ch));
+    }
+    unshifted_key(key.virtual_key)
+}
+
+/// Virtual keys Slint names without help from the keyboard layout.
+fn named_virtual_key(virtual_key: u16, shift: bool) -> Option<char> {
+    Some(match virtual_key {
+        0x08 => '\u{8}', // Back
+        0x09 => {
+            if shift {
+                '\u{19}' // Backtab
+            } else {
+                '\t'
+            }
+        }
+        0x0D => '\n',            // Enter
+        0x10 | 0xA0 => '\u{10}', // Shift, Left Shift
+        0xA1 => '\u{15}',        // Right Shift
+        0x11 | 0xA2 => '\u{11}', // Control, Left Control
+        0xA3 => '\u{16}',        // Right Control
+        0x12 | 0xA4 => '\u{12}', // Alt, Left Alt
+        0xA5 => '\u{13}',        // Right Alt (AltGr)
+        0x13 => '\u{F730}',      // Pause
+        0x14 => '\u{14}',        // Caps Lock
+        0x1B => '\u{1b}',
+        0x20 => ' ',
+        0x21 => '\u{F72C}', // Page Up
+        0x22 => '\u{F72D}', // Page Down
+        0x23 => '\u{F72B}', // End
+        0x24 => '\u{F729}', // Home
+        0x25 => '\u{F702}', // Left
+        0x26 => '\u{F700}', // Up
+        0x27 => '\u{F703}', // Right
+        0x28 => '\u{F701}', // Down
+        0x2C => '\u{F731}', // Print Screen, which Slint calls SysReq
+        0x2D => '\u{F727}', // Insert
+        0x2E => '\u{7f}',   // Delete
+        0x5B => '\u{17}',   // Left Windows
+        0x5C => '\u{18}',   // Right Windows
+        0x5D => '\u{F735}', // Application (Menu)
+        0x70..=0x87 => return function_key(virtual_key),
+        0x91 => '\u{F72F}', // Scroll Lock
+        0xA6 => '\u{F748}', // Browser Back
+        0xB2 => '\u{F734}', // Media Stop
+        _ => return None,
+    })
+}
+
+/// F1 is U+F704 and the following function keys are the next scalars.
+fn function_key(virtual_key: u16) -> Option<char> {
+    let index = virtual_key.checked_sub(0x70)?;
+    if index > 23 {
+        return None;
+    }
+    char::from_u32(0xF704 + u32::from(index))
+}
+
+/// Unshifted US glyph for a virtual key, used when the event has no character
+/// (a key-up, a test) or Control is naming the physical key.
+fn unshifted_key(virtual_key: u16) -> Option<char> {
+    Some(match virtual_key {
+        0x30..=0x39 => char::from_u32(u32::from(b'0') + u32::from(virtual_key - 0x30))?,
+        0x41..=0x5A => char::from_u32(u32::from(b'a') + u32::from(virtual_key - 0x41))?,
+        0x60..=0x69 => char::from_u32(u32::from(b'0') + u32::from(virtual_key - 0x60))?,
+        0x6A => '*',
+        0x6B => '+',
+        0x6D => '-',
+        0x6E => '.',
+        0x6F => '/',
+        0xBA => ';',
+        0xBB => '=',
+        0xBC => ',',
+        0xBD => '-',
+        0xBE => '.',
+        0xBF => '/',
+        0xC0 => '`',
+        0xDB => '[',
+        0xDC => '\\',
+        0xDD => ']',
+        0xDE => '\'',
+        _ => return None,
+    })
+}
+
+fn one_scalar(text: &str) -> Option<char> {
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    Some(first)
 }
 
 /// `range` is a UTF-16 selection inside `text`, the unit `NSRange` uses.
@@ -678,5 +805,236 @@ mod tests {
         assert_eq!(utf16_selection_to_utf8("あ", 0, 1), Some(0..3));
         assert_eq!(utf16_selection_to_utf8("あ", -1, -1), None);
         assert_eq!(utf16_selection_to_utf8("a", 0, 4), None);
+    }
+
+    struct WinCase {
+        key: Key,
+        virtual_key: u16,
+        character: &'static str,
+        shift: bool,
+        control: bool,
+    }
+
+    fn win_event(case: &WinCase) -> VirtualKeyEvent<'static> {
+        VirtualKeyEvent {
+            virtual_key: case.virtual_key,
+            character: case.character,
+            shift: case.shift,
+            control: case.control,
+        }
+    }
+
+    fn vk(key: Key, virtual_key: u16) -> WinCase {
+        WinCase {
+            key,
+            virtual_key,
+            character: "",
+            shift: false,
+            control: false,
+        }
+    }
+
+    fn vk_shift(key: Key, virtual_key: u16) -> WinCase {
+        WinCase {
+            key,
+            virtual_key,
+            character: "",
+            shift: true,
+            control: false,
+        }
+    }
+
+    fn glyph(key: Key, character: &'static str) -> WinCase {
+        WinCase {
+            key,
+            virtual_key: 0,
+            character,
+            shift: false,
+            control: false,
+        }
+    }
+
+    /// One WinUI source for every [`Key`] variant in Slint 1.18.1.
+    fn win_cases() -> Vec<WinCase> {
+        vec![
+            vk(Key::Backspace, 0x08),
+            vk(Key::Tab, 0x09),
+            vk(Key::Return, 0x0D),
+            vk(Key::Escape, 0x1B),
+            vk_shift(Key::Backtab, 0x09),
+            vk(Key::Delete, 0x2E),
+            vk(Key::Shift, 0xA0),
+            vk(Key::Control, 0xA2),
+            vk(Key::Alt, 0xA4),
+            vk(Key::AltGr, 0xA5),
+            vk(Key::CapsLock, 0x14),
+            vk(Key::ShiftR, 0xA1),
+            vk(Key::ControlR, 0xA3),
+            vk(Key::Meta, 0x5B),
+            vk(Key::MetaR, 0x5C),
+            vk(Key::Space, 0x20),
+            vk(Key::UpArrow, 0x26),
+            vk(Key::DownArrow, 0x28),
+            vk(Key::LeftArrow, 0x25),
+            vk(Key::RightArrow, 0x27),
+            vk(Key::F1, 0x70),
+            vk(Key::F2, 0x71),
+            vk(Key::F3, 0x72),
+            vk(Key::F4, 0x73),
+            vk(Key::F5, 0x74),
+            vk(Key::F6, 0x75),
+            vk(Key::F7, 0x76),
+            vk(Key::F8, 0x77),
+            vk(Key::F9, 0x78),
+            vk(Key::F10, 0x79),
+            vk(Key::F11, 0x7A),
+            vk(Key::F12, 0x7B),
+            vk(Key::F13, 0x7C),
+            vk(Key::F14, 0x7D),
+            vk(Key::F15, 0x7E),
+            vk(Key::F16, 0x7F),
+            vk(Key::F17, 0x80),
+            vk(Key::F18, 0x81),
+            vk(Key::F19, 0x82),
+            vk(Key::F20, 0x83),
+            vk(Key::F21, 0x84),
+            vk(Key::F22, 0x85),
+            vk(Key::F23, 0x86),
+            vk(Key::F24, 0x87),
+            vk(Key::Insert, 0x2D),
+            vk(Key::Home, 0x24),
+            vk(Key::End, 0x23),
+            vk(Key::PageUp, 0x21),
+            vk(Key::PageDown, 0x22),
+            vk(Key::ScrollLock, 0x91),
+            vk(Key::Pause, 0x13),
+            vk(Key::SysReq, 0x2C),
+            vk(Key::Stop, 0xB2),
+            vk(Key::Menu, 0x5D),
+            vk(Key::Back, 0xA6),
+            vk(Key::A, 0x41),
+            vk(Key::B, 0x42),
+            vk(Key::C, 0x43),
+            vk(Key::D, 0x44),
+            vk(Key::E, 0x45),
+            vk(Key::F, 0x46),
+            vk(Key::G, 0x47),
+            vk(Key::H, 0x48),
+            vk(Key::I, 0x49),
+            vk(Key::J, 0x4A),
+            vk(Key::K, 0x4B),
+            vk(Key::L, 0x4C),
+            vk(Key::M, 0x4D),
+            vk(Key::N, 0x4E),
+            vk(Key::O, 0x4F),
+            vk(Key::P, 0x50),
+            vk(Key::Q, 0x51),
+            vk(Key::R, 0x52),
+            vk(Key::S, 0x53),
+            vk(Key::T, 0x54),
+            vk(Key::U, 0x55),
+            vk(Key::V, 0x56),
+            vk(Key::W, 0x57),
+            vk(Key::X, 0x58),
+            vk(Key::Y, 0x59),
+            vk(Key::Z, 0x5A),
+            vk(Key::Digit0, 0x30),
+            vk(Key::Digit1, 0x31),
+            vk(Key::Digit2, 0x32),
+            vk(Key::Digit3, 0x33),
+            vk(Key::Digit4, 0x34),
+            vk(Key::Digit5, 0x35),
+            vk(Key::Digit6, 0x36),
+            vk(Key::Digit7, 0x37),
+            vk(Key::Digit8, 0x38),
+            vk(Key::Digit9, 0x39),
+            glyph(Key::Circumflex, "^"),
+            glyph(Key::Exclamation, "!"),
+            glyph(Key::DoubleQuote, "\""),
+            glyph(Key::Hash, "#"),
+            glyph(Key::Dollar, "$"),
+            glyph(Key::Percent, "%"),
+            glyph(Key::Ampersand, "&"),
+            glyph(Key::Underscore, "_"),
+            glyph(Key::OpenParen, "("),
+            glyph(Key::CloseParen, ")"),
+            vk(Key::Asterisk, 0x6A),
+            vk(Key::Plus, 0x6B),
+            glyph(Key::Pipe, "|"),
+            vk(Key::HyphenMinus, 0xBD),
+            glyph(Key::OpenCurlyBracket, "{"),
+            glyph(Key::CloseCurlyBracket, "}"),
+            glyph(Key::Tilde, "~"),
+            glyph(Key::Colon, ":"),
+            vk(Key::Semicolon, 0xBA),
+            glyph(Key::LessThan, "<"),
+            vk(Key::Equals, 0xBB),
+            glyph(Key::GreaterThan, ">"),
+            glyph(Key::QuestionMark, "?"),
+            glyph(Key::At, "@"),
+            vk(Key::Comma, 0xBC),
+            vk(Key::Period, 0xBE),
+            vk(Key::Slash, 0xBF),
+            vk(Key::BackQuote, 0xC0),
+            vk(Key::OpenBracket, 0xDB),
+            vk(Key::BackSlash, 0xDC),
+            vk(Key::CloseBracket, 0xDD),
+            vk(Key::Quote, 0xDE),
+        ]
+    }
+
+    #[test]
+    fn every_slint_key_has_a_virtual_key_source() {
+        let cases = win_cases();
+        assert_eq!(cases.len(), 123);
+        let mut seen = std::collections::BTreeSet::new();
+        for case in &cases {
+            let expected: SharedString = case.key.into();
+            let got = virtual_key_text(win_event(case)).map(|ch| ch.to_string());
+            assert_eq!(got.as_deref(), Some(expected.as_str()), "{expected}");
+            assert!(
+                seen.insert(expected.to_string()),
+                "two sources produce {expected}"
+            );
+        }
+        assert_eq!(seen.len(), 123);
+    }
+
+    #[test]
+    fn virtual_key_command_skips_printable_keys() {
+        assert_eq!(virtual_key_command(0x09, true), Some('\u{19}'));
+        assert_eq!(virtual_key_command(0x70, false), Some('\u{F704}'));
+        assert!(virtual_key_command(0x41, false).is_none());
+        assert!(virtual_key_command(0x01, false).is_none());
+    }
+
+    #[test]
+    fn control_shortcut_and_shifted_digit_use_the_right_glyph() {
+        let text = virtual_key_text(VirtualKeyEvent {
+            virtual_key: 0x43, // C
+            character: "\u{3}",
+            shift: false,
+            control: true,
+        });
+        assert_eq!(text, Some('c'));
+
+        // The layout's character wins over the unshifted digit.
+        let text = virtual_key_text(VirtualKeyEvent {
+            virtual_key: 0x31,
+            character: "!",
+            shift: true,
+            control: false,
+        });
+        assert_eq!(text, Some('!'));
+
+        assert!(
+            virtual_key_text(VirtualKeyEvent {
+                virtual_key: 0,
+                character: "あいう",
+                shift: false,
+                control: false,
+            })
+            .is_none()
+        );
     }
 }
