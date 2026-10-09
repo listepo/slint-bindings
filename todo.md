@@ -1,4 +1,4 @@
-- T4. macOS keyboard, IME and focus
+- T4. macOS keyboard, IME and focus (claimed)
 - T5. CI
 - T6. WinUI host builds and runs (M2)
 - T7. GPU path on macOS (M3)

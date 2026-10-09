@@ -12,8 +12,10 @@ use std::time::{Duration, Instant};
 use slint::platform::software_renderer::{
     MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
 };
-use slint::platform::{PointerEventButton, WindowEvent};
+use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent, WindowEventDispatchResult};
 use slint::{ComponentHandle, LogicalPosition, LogicalSize, PhysicalSize, SharedString};
+
+use crate::keys::utf16_selection_to_utf8;
 
 use crate::{Error, platform};
 
@@ -171,7 +173,7 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
             return Ok(());
         }
         if scale != self.scale || self.width == 0 {
-            self.dispatch(WindowEvent::ScaleFactorChanged {
+            self.send(WindowEvent::ScaleFactorChanged {
                 scale_factor: scale,
             })?;
         }
@@ -179,7 +181,7 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
         self.width = width;
         self.height = height;
         self.window.set_size(PhysicalSize::new(width, height));
-        self.dispatch(WindowEvent::Resized {
+        self.send(WindowEvent::Resized {
             size: LogicalSize::new(width as f32 / scale, height as f32 / scale),
         })?;
         let len = width as usize * height as usize;
@@ -259,7 +261,7 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
 
     /// Pointer moved to `x`,`y` logical points from the top-left corner.
     pub fn pointer_moved(&self, x: f32, y: f32) -> Result<(), Error> {
-        self.dispatch(WindowEvent::PointerMoved {
+        self.send(WindowEvent::PointerMoved {
             position: LogicalPosition::new(x, y),
         })
     }
@@ -267,7 +269,7 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
     /// Pointer button went down.
     pub fn pointer_pressed(&self, x: f32, y: f32, button: PointerButton) -> Result<(), Error> {
         let position = LogicalPosition::new(x, y);
-        self.dispatch(WindowEvent::PointerPressed {
+        self.send(WindowEvent::PointerPressed {
             position,
             button: button.into(),
         })
@@ -276,7 +278,7 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
     /// Pointer button went up.
     pub fn pointer_released(&self, x: f32, y: f32, button: PointerButton) -> Result<(), Error> {
         let position = LogicalPosition::new(x, y);
-        self.dispatch(WindowEvent::PointerReleased {
+        self.send(WindowEvent::PointerReleased {
             position,
             button: button.into(),
         })
@@ -284,50 +286,173 @@ impl<C: ComponentHandle> EmbeddedHost<C> {
 
     /// Pointer left the view.
     pub fn pointer_exited(&self) -> Result<(), Error> {
-        self.dispatch(WindowEvent::PointerExited)
+        self.send(WindowEvent::PointerExited)
     }
 
     /// Scroll wheel or trackpad delta, in logical points.
     pub fn pointer_scrolled(&self, x: f32, y: f32, dx: f32, dy: f32) -> Result<(), Error> {
         let position = LogicalPosition::new(x, y);
-        self.dispatch(WindowEvent::PointerScrolled {
+        self.send(WindowEvent::PointerScrolled {
             position,
             delta_x: dx,
             delta_y: dy,
         })
     }
 
-    /// A key went down; `text` is the character it produces or a Slint key code.
-    pub fn key_pressed(&self, text: &str) -> Result<(), Error> {
+    /// A key went down. Returns whether the view kept the key.
+    ///
+    /// `false` with no error means the host should keep handling it. Tab and
+    /// Backtab return `false` when the focus chain has no further item in that
+    /// direction (including the step that would wrap around), so the host can
+    /// move focus out of the view.
+    pub fn key_pressed(&self, text: &str) -> Result<bool, Error> {
+        if text == "\t" || text == "\u{19}" {
+            return self.move_focus_inside(text == "\t");
+        }
         self.dispatch(WindowEvent::KeyPressed {
             text: SharedString::from(text),
         })
     }
 
-    /// A key went up.
+    /// A key went up. A release the scene ignores is still a successful call.
     pub fn key_released(&self, text: &str) -> Result<(), Error> {
-        self.dispatch(WindowEvent::KeyReleased {
+        self.send(WindowEvent::KeyReleased {
             text: SharedString::from(text),
         })
+    }
+
+    /// Replaces the input method's preedit.
+    ///
+    /// `utf16_start` and `utf16_end` select inside `preedit` in UTF-16 code
+    /// units, which is what AppKit's `NSRange` counts. A negative start means
+    /// the input method gave no selection (`NSNotFound`). An empty `preedit`
+    /// clears the composition without inserting text.
+    pub fn update_composition(
+        &self,
+        preedit: &str,
+        utf16_start: i32,
+        utf16_end: i32,
+    ) -> Result<(), Error> {
+        self.dispatch_composition(
+            i_slint_core::input::KeyEventType::UpdateComposition,
+            "",
+            preedit,
+            utf16_selection_to_utf8(preedit, utf16_start, utf16_end),
+        )
     }
 
     /// A held key auto-repeated. Distinct from [`Self::key_pressed`].
     pub fn key_repeated(&self, text: &str) -> Result<(), Error> {
-        self.dispatch(WindowEvent::KeyPressRepeated {
+        self.send(WindowEvent::KeyPressRepeated {
             text: SharedString::from(text),
         })
     }
 
-    /// The host view gained or lost keyboard focus.
-    pub fn focus_changed(&self, focused: bool) -> Result<(), Error> {
-        self.dispatch(WindowEvent::WindowActiveChanged(focused))
+    /// Inserts `text` and clears the preedit. This is the commit half of an
+    /// input method: the marked text becomes the final string (a kana, a
+    /// kanji, an emoji, a dead-key combination).
+    pub fn commit_composition(&self, text: &str) -> Result<(), Error> {
+        self.dispatch_composition(
+            i_slint_core::input::KeyEventType::CommitComposition,
+            text,
+            "",
+            None,
+        )
     }
 
-    fn dispatch(&self, event: WindowEvent) -> Result<(), Error> {
-        // Whether Slint consumed the event does not matter to a host that owns no other UI here.
-        self.window.dispatch_event_with_result(event)?;
+    /// The host view gained or lost keyboard focus.
+    pub fn focus_changed(&self, focused: bool) -> Result<(), Error> {
+        self.send(WindowEvent::WindowActiveChanged(focused))
+    }
+
+    /// Moves focus to the next or previous item inside the view.
+    ///
+    /// Slint's own Tab handling always reports the key as accepted, and it
+    /// wraps from the last item back to the first. A host that owns the rest
+    /// of the window needs the wrap (and a chain with nowhere to go) reported
+    /// as "not kept", with focus left on the item that had it.
+    fn move_focus_inside(&self, forward: bool) -> Result<bool, Error> {
+        let inner = i_slint_core::window::WindowInner::from_pub(self.window.window());
+        let before = inner.focus_item.borrow().upgrade();
+        let text = if forward { "\t" } else { "\u{19}" };
+        let _accepted = self.dispatch(WindowEvent::KeyPressed {
+            text: SharedString::from(text),
+        })?;
+        let after = inner.focus_item.borrow().upgrade();
+        let kept = match (&before, &after) {
+            (None, Some(_)) => true,
+            (Some(before), Some(after)) if before != after => {
+                let wrapped = if forward {
+                    focus_ordinal(after) <= focus_ordinal(before)
+                } else {
+                    focus_ordinal(after) >= focus_ordinal(before)
+                };
+                if wrapped {
+                    if forward {
+                        inner.focus_previous_item();
+                    } else {
+                        inner.focus_next_item();
+                    }
+                }
+                !wrapped
+            }
+            _ => false,
+        };
+        Ok(kept)
+    }
+
+    fn send(&self, event: WindowEvent) -> Result<(), Error> {
+        let _accepted = self.dispatch(event)?;
         Ok(())
     }
+
+    /// `true` when the scene accepted the event.
+    fn dispatch(&self, event: WindowEvent) -> Result<bool, Error> {
+        Ok(self.window.dispatch_event_with_result(event)? == WindowEventDispatchResult::Accepted)
+    }
+
+    fn dispatch_composition(
+        &self,
+        event_type: i_slint_core::input::KeyEventType,
+        text: &str,
+        preedit: &str,
+        selection: Option<std::ops::Range<i32>>,
+    ) -> Result<(), Error> {
+        // Composition is not a public `WindowEvent`. Slint's own backends
+        // deliver it through the same hidden internal event, which is what
+        // makes a preedit show up in a `TextInput` without being committed.
+        let mut key_event = i_slint_core::input::KeyEvent::default();
+        key_event.text = SharedString::from(text);
+        let event = i_slint_core::input::InternalKeyEvent {
+            key_event,
+            event_type,
+            preedit_text: SharedString::from(preedit),
+            preedit_selection: selection,
+            ..Default::default()
+        };
+        let _accepted = self
+            .window
+            .dispatch_event_with_result(WindowEvent::internal(event))?;
+        Ok(())
+    }
+}
+
+/// Steps of `next_focus_item` from the component root until `item`.
+/// Later controls have a higher ordinal, so a forward Tab that lands on a
+/// lower ordinal wrapped around the chain.
+fn focus_ordinal(item: &i_slint_core::item_tree::ItemRc) -> usize {
+    let mut cursor = i_slint_core::item_tree::ItemRc::new(item.item_tree().clone(), 0);
+    let start = cursor.clone();
+    for step in 0..4096 {
+        if cursor == *item {
+            return step;
+        }
+        cursor = cursor.next_focus_item();
+        if cursor == start {
+            break;
+        }
+    }
+    usize::MAX
 }
 
 /// Copies packed RGBA8 into `out`. `out` may be longer than one frame; only the frame is written.
@@ -433,6 +558,103 @@ mod tests {
         host.render(&mut buf)?;
         host.resize(WIDTH, HEIGHT, 1.0)?;
         assert!(!host.render(&mut buf)?.redrawn);
+        Ok(())
+    }
+
+    fn press(host: &EmbeddedHost<DemoForm>, x: f32, y: f32) -> Result<(), Error> {
+        host.pointer_moved(x, y)?;
+        host.pointer_pressed(x, y, PointerButton::Left)?;
+        host.pointer_released(x, y, PointerButton::Left)?;
+        Ok(())
+    }
+
+    #[test]
+    fn preedit_stays_uncommitted_until_the_input_method_commits() -> Result<(), Error> {
+        let host = demo()?;
+        host.focus_changed(true)?;
+        press(&host, 160.0, 64.0)?;
+        // One hiragana: the reading, not the committed text.
+        host.update_composition("あ", 0, 1)?;
+        assert_eq!(host.component().get_name().as_str(), "");
+        host.commit_composition("日本語")?;
+        assert_eq!(host.component().get_name().as_str(), "日本語");
+        Ok(())
+    }
+
+    #[test]
+    fn tab_leaves_the_view_at_either_end_of_the_focus_chain() -> Result<(), Error> {
+        let host = demo()?;
+        host.focus_changed(true)?;
+        press(&host, 160.0, 64.0)?;
+        // Forward from the field reaches the button, so the view keeps Tab
+        // and a following letter does not change the name.
+        assert!(host.key_pressed("\t")?);
+        host.key_released("\t")?;
+        let _ = host.key_pressed("Z")?;
+        host.key_released("Z")?;
+        assert_eq!(host.component().get_name().as_str(), "");
+
+        // A second Tab would wrap to the field. The view does not keep it,
+        // and the letter stays out of the name.
+        let inner = i_slint_core::window::WindowInner::from_pub(host.window.window());
+        let before = inner
+            .focus_item
+            .borrow()
+            .upgrade()
+            .as_ref()
+            .map(focus_ordinal);
+        let kept = host.key_pressed("\t")?;
+        let after = inner
+            .focus_item
+            .borrow()
+            .upgrade()
+            .as_ref()
+            .map(focus_ordinal);
+        assert!(
+            !kept,
+            "kept the wrapping tab; ordinals {before:?} -> {after:?}"
+        );
+        assert_eq!(before, after, "undo left focus on a different item");
+        host.key_released("\t")?;
+        let _ = host.key_pressed("Q")?;
+        host.key_released("Q")?;
+        assert_eq!(host.component().get_name().as_str(), "");
+
+        let host = demo()?;
+        host.focus_changed(true)?;
+        press(&host, 160.0, 64.0)?;
+        // Backtab from the first control would wrap to the button, so the
+        // view does not keep it and the letter still reaches the field.
+        let inner = i_slint_core::window::WindowInner::from_pub(host.window.window());
+        let before = inner
+            .focus_item
+            .borrow()
+            .upgrade()
+            .as_ref()
+            .map(focus_ordinal);
+        assert!(!host.key_pressed("\u{19}")?);
+        let after = inner
+            .focus_item
+            .borrow()
+            .upgrade()
+            .as_ref()
+            .map(focus_ordinal);
+        assert_eq!(before, after, "undo left focus on a different item");
+        let _ = host.key_pressed("Q")?;
+        host.key_released("Q")?;
+        assert_eq!(host.component().get_name().as_str(), "Q");
+        Ok(())
+    }
+
+    #[test]
+    fn dead_key_commit_inserts_the_composed_character() -> Result<(), Error> {
+        let host = demo()?;
+        host.focus_changed(true)?;
+        press(&host, 160.0, 64.0)?;
+        host.update_composition("´", -1, -1)?;
+        assert_eq!(host.component().get_name().as_str(), "");
+        host.commit_composition("é")?;
+        assert_eq!(host.component().get_name().as_str(), "é");
         Ok(())
     }
 

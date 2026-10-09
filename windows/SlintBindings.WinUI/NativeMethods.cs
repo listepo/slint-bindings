@@ -70,6 +70,19 @@ internal static partial class NativeMethods
     internal static partial bool sb_host_key_repeated(IntPtr host, string text);
 
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool sb_host_composition_update(IntPtr host, string preedit, int utf16Start, int utf16End);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool sb_host_composition_commit(IntPtr host, string text);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static unsafe partial bool sb_appkit_key_text(
+        ushort keyCode, string characters, string ignoring, uint modifiers, byte* buffer, nuint bufferLen);
+
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void sb_demo_set_name(IntPtr host, string name);
 
     [LibraryImport(Lib)]

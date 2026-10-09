@@ -115,12 +115,27 @@ public final class SlintHost {
         _ = sb_host_pointer_scrolled(handle, Float(x), Float(y), Float(dx), Float(dy))
     }
 
-    public func keyPressed(_ text: String) {
-        _ = sb_host_key_pressed(handle, text)
+    /// Returns whether Slint accepted the key. `false` with a nil `sb_last_error`
+    /// means the scene rejected it (Tab when nothing else inside the view can take focus).
+    @discardableResult
+    public func keyPressed(_ text: String) -> Bool {
+        sb_host_key_pressed(handle, text)
     }
 
-    public func keyReleased(_ text: String) {
-        _ = sb_host_key_released(handle, text)
+    /// Returns false only when the call failed. A release the scene ignores is still success.
+    @discardableResult
+    public func keyReleased(_ text: String) -> Bool {
+        sb_host_key_released(handle, text)
+    }
+
+    /// Shows `preedit` as uncommitted text. Offsets are UTF-16 code units; pass `-1` for no selection.
+    public func updateComposition(_ preedit: String, utf16Start: Int32, utf16End: Int32) {
+        _ = sb_host_composition_update(handle, preedit, utf16Start, utf16End)
+    }
+
+    /// Inserts `text` and clears the preedit.
+    public func commitComposition(_ text: String) {
+        _ = sb_host_composition_commit(handle, text)
     }
 
     public func keyRepeated(_ text: String) {

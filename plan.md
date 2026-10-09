@@ -39,7 +39,7 @@ Not added: `slint_embed::events` is used only by slint_dart and stays there; `i-
 
 | # | Status | Priority | Complexity | Readiness | Agent |
 | --- | --- | --- | --- | --- | --- |
-| T4 | todo | P1 | 3 | 0% | |
+| T4 | doing | P1 | 3 | 80% | cursor |
 | T5 | todo | P1 | 2 | 0% | |
 | T6 | todo | P1 | 3 | 0% | |
 | T7 | todo | P1 | 4 | 0% | |
@@ -88,6 +88,11 @@ key events) with table-driven tests; make Tab move focus out of the Slint view
 into SwiftUI when Slint has no next focus item. Done when a Japanese input
 method commits text into the demo field and the key-map tests cover every
 `slint::platform::Key`.
+
+Execution: the AppKit → Slint map lives in `slint-bindings-core` (one table,
+tested on every `Key`). `SlintNSView` adopts `NSTextInputClient`: marked text
+is a preedit, `insertText` commits, and a rejected Tab or Backtab calls
+`selectNextKeyView` / `selectPreviousKeyView`.
 
 ### T5. CI
 

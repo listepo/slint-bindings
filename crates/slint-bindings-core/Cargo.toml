@@ -21,5 +21,7 @@ slint-build = { workspace = true }
 workspace = true
 
 [package.metadata.cargo-machete]
-# Present only to switch on image and SVG decoding (see the workspace manifest).
+# Feature-unification dependency for image and SVG decoding (see the workspace
+# manifest). The host also calls into it for composition and the focus chain;
+# the ignore stays so dropping those calls does not look like an unused crate.
 ignored = ["i-slint-core"]

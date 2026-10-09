@@ -168,13 +168,18 @@ bool sb_host_focus_changed(const struct SbHost *host, bool focused);
 /**
  * A key went down; `text` is UTF-8 (the typed character or a Slint key code).
  *
+ * Returns true when Slint accepted the key. Returns false when the scene
+ * rejected it or the call failed. A rejection leaves `sb_last_error` null, so
+ * the host can move focus (Tab with no next item). A failure sets it.
+ *
  * # Safety
  * `host` must be null or live; `text` null or NUL-terminated.
  */
 bool sb_host_key_pressed(const struct SbHost *host, const char *text);
 
 /**
- * A key went up.
+ * A key went up. Returns false only when the call failed; see `sb_last_error`.
+ * A release the scene ignores is still a success.
  *
  * # Safety
  * `host` must be null or live; `text` null or NUL-terminated.
@@ -188,6 +193,49 @@ bool sb_host_key_released(const struct SbHost *host, const char *text);
  * `host` must be null or live; `text` null or NUL-terminated.
  */
 bool sb_host_key_repeated(const struct SbHost *host, const char *text);
+
+/**
+ * Replaces the input-method preedit. `utf16_start`/`utf16_end` select inside
+ * `preedit` in UTF-16 code units (an AppKit `NSRange`). A negative start means
+ * no selection. An empty `preedit` clears the composition.
+ *
+ * Returns false on failure; see `sb_last_error`.
+ *
+ * # Safety
+ * `host` must be null or live; `preedit` null or NUL-terminated.
+ */
+bool sb_host_composition_update(const struct SbHost *host,
+                                const char *preedit,
+                                int32_t utf16_start,
+                                int32_t utf16_end);
+
+/**
+ * Inserts `text` and clears the preedit. Empty `text` only clears it.
+ *
+ * Returns false on failure; see `sb_last_error`.
+ *
+ * # Safety
+ * `host` must be null or live; `text` null or NUL-terminated.
+ */
+bool sb_host_composition_commit(const struct SbHost *host, const char *text);
+
+/**
+ * Writes the Slint key text for one AppKit key event into `out`.
+ *
+ * Returns true when a key was written. Returns false when the event is not a
+ * Slint key (the buffer is then an empty string and `sb_last_error` is null)
+ * or the call failed (`sb_last_error` is set).
+ *
+ * # Safety
+ * `characters` and `ignoring` must be null or NUL-terminated. `out` must be
+ * null or valid for `out_len` writable bytes.
+ */
+bool sb_appkit_key_text(uint16_t key_code,
+                        const char *characters,
+                        const char *ignoring,
+                        uint32_t modifiers,
+                        char *out,
+                        size_t out_len);
 
 /**
  * Sets the demo form's `name` property.

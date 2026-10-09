@@ -8,9 +8,10 @@ use std::ffi::{CStr, CString, c_char, c_void};
 
 use slint_bindings_ffi::{
     SbFrame, SbHost, SbPointerButton, run_on_test_ui_thread, sb_demo_new, sb_demo_on_submitted,
-    sb_demo_set_name, sb_host_focus_changed, sb_host_frame_len, sb_host_free, sb_host_key_pressed,
+    sb_demo_set_name, sb_host_composition_commit, sb_host_composition_update,
+    sb_host_focus_changed, sb_host_frame_len, sb_host_free, sb_host_key_pressed,
     sb_host_key_released, sb_host_key_repeated, sb_host_pointer_moved, sb_host_pointer_pressed,
-    sb_host_pointer_released, sb_host_render, sb_host_resize, sb_tick,
+    sb_host_pointer_released, sb_host_render, sb_host_resize, sb_last_error, sb_tick,
 };
 
 const FORM_WIDTH: u32 = 320;
@@ -120,6 +121,59 @@ fn type_ascii_then_continue_submits_the_name() {
 
         let (frame, _) = render(&host);
         assert_eq!(frame.redrawn, 1);
+    });
+}
+
+#[test]
+fn japanese_preedit_commits_into_the_field() {
+    run_on_test_ui_thread(|| {
+        let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
+        let _ = render(&host);
+        // SAFETY: `host` is live until the end of this test.
+        unsafe { assert!(sb_host_focus_changed(host.0, true)) }
+        click(&host, FIELD_X, FIELD_Y);
+
+        let preedit = CString::new("あ").unwrap_or_default();
+        let committed = CString::new("日本語").unwrap_or_default();
+        // SAFETY: `host` is live; both strings are NUL-terminated.
+        unsafe {
+            assert!(sb_host_composition_update(host.0, preedit.as_ptr(), 0, 1));
+        }
+        let mut submitted = Vec::new();
+        listen(&host, &raw mut submitted);
+        click(&host, BUTTON_X, BUTTON_Y);
+        // The reading is still a preedit, so Continue submits an empty name.
+        assert_eq!(submitted, [""]);
+
+        click(&host, FIELD_X, FIELD_Y);
+        // SAFETY: `host` is live; `committed` is NUL-terminated.
+        unsafe {
+            assert!(sb_host_composition_commit(host.0, committed.as_ptr()));
+        }
+        submitted.clear();
+        click(&host, BUTTON_X, BUTTON_Y);
+        assert_eq!(submitted, ["日本語"]);
+    });
+}
+
+#[test]
+fn tab_past_the_last_control_is_not_accepted() {
+    run_on_test_ui_thread(|| {
+        let host = open(FORM_WIDTH, FORM_HEIGHT, 1.0);
+        let _ = render(&host);
+        // SAFETY: `host` is live until the end of this test.
+        unsafe { assert!(sb_host_focus_changed(host.0, true)) }
+        click(&host, FIELD_X, FIELD_Y);
+        let tab = CString::new("\t").unwrap_or_default();
+        // SAFETY: `host` is live; `tab` is NUL-terminated.
+        unsafe {
+            // Field → button: the view keeps the key.
+            assert!(sb_host_key_pressed(host.0, tab.as_ptr()));
+            assert!(sb_host_key_released(host.0, tab.as_ptr()));
+            // Button → wrap: the host should move focus out, and that is not an error.
+            assert!(!sb_host_key_pressed(host.0, tab.as_ptr()));
+            assert!(sb_last_error().is_null());
+        }
     });
 }
 
